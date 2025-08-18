@@ -1,0 +1,21 @@
+import os
+import torch
+# Create folder for saving model weights
+os.makedirs("/content/saved_model", exist_ok=True)
+# ✅ Import your CDAN-DenseUNet model
+from models.cdan_denseunet_cbam import CDANDenseUNet  
+# ✅ Initialize model (adjust params as needed)
+model = CDANDenseUNet(
+    num_classes=2,          # adjust if you have more/less classes
+    grl_lambda=1.0,         # gradient reversal strength
+    in_ch=3,
+    out_ch=3,
+    growth_rate=12,         # can be 16 or 32 depending on GPU
+    block_layers=(3,4,5),   # depth of Dense blocks
+    base_channels=32,
+    use_cbam_encoder=True,
+    use_cbam_decoder=True
+)
+# ✅ Save model weights
+torch.save(model.state_dict(), "/content/saved_model/cdandenseunet.pt")
+print("✅ Model weights saved to /content/saved_model/cdandenseunet.pt")
