@@ -11,7 +11,7 @@ sys.path.append('/content/Cdandenseunet')  # Adjust path if needed in Colab
 # -------- Import utils --------
 from utils.dataloader import cvccolondbDataset
 from utils.custom_loss import total_loss_fn
-from utils.metrics import evaluate_metrics_individual
+from .metrics import calculate_psnr, calculate_ssim, calculate_ebcm, evaluate_metrics_individual
 from utils.plot_loss import plot_loss_curve
 from utils.plot_metrics import plot_metrics_curve
 # -------- Import model --------
