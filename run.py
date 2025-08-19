@@ -5,7 +5,7 @@ import torch
 import numpy as np
 from PIL import Image
 from torchvision import transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset,DataLoader
 # -------- Add repo root to sys.path if needed --------
 sys.path.append('/content/Cdandenseunet')  # Adjust path if needed in Colab
 # -------- Import utils --------
