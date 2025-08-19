@@ -15,7 +15,7 @@ from .metrics import calculate_psnr, calculate_ssim, calculate_ebcm, evaluate_me
 from utils.plot_loss import plot_loss_curve
 from utils.plot_metrics import plot_metrics_curve
 # -------- Import model --------
-from models.cdan_denseunet import cdan_denseunet
+from models.cdan_denseunet import CDANDenseUNet
 # -------- Argument parser --------
 parser = argparse.ArgumentParser()
 parser.add_argument('--mode', type=str, choices=['train', 'val', 'test'], required=True,
