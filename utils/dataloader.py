@@ -41,6 +41,6 @@ train_dataset = cvccolondbDataset(train_enhanced_dir, train_high_dir, transform=
 val_dataset = cvccolondbDataset(val_enhanced_dir, val_high_dir, transform=transform)
 # === Create DataLoaders ===
 batch_size = 8
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+train_loader = dataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+val_loader = dataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 print(f"Train samples: {len(train_dataset)}, Val samples: {len(val_dataset)}")
