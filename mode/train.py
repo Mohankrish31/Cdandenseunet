@@ -5,18 +5,18 @@ from PIL import Image
 from torchvision import transforms
 import sys
 # -------- Add model path --------
-sys.path.append('/content/CbamDenseUnet')
-from models.cbam_denseunet_transformer import cbam_denseunet_transformer
+sys.path.append('/content/Cdandenseunet')
+from models.cdan_denseunet import cdan_denseunet
 # -------- Paths --------
 input_dir = "/content/cvccolondbsplit/train/low"  # Low-light training images
 output_dir = "/content/outputs/train_enhanced"
-model_path="/content/models/cbam_denseunet_transformer.pt"
+model_path="/content/models/cdan_denseunet.pt"
 # -------- Create output directory --------
 os.makedirs(output_dir, exist_ok=True)
 # -------- Setup device --------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # -------- Load model and weights --------
-model = cbam_denseunet_transformer(in_channels=3, base_channels=32).to(device)
+model = cdan_denseunet(in_channels=3, base_channels=32).to(device)
 model.load_state_dict(torch.load(model_path, map_location=device))
 model.eval()
 # -------- Preprocessing --------
