@@ -9,7 +9,7 @@ sys.path.append('/content/Cdandenseunet')
 from models.cdan_denseunet import cdan_denseunet
 # -------- Paths --------
 input_dir = "/content/cvccolondbsplit/test/low"   # Low-light test images
-output_dir = "/content/outputs/test_enhanced"
+output_dir = "/content/drive/MyDrive/Colon_Enhanced/test_enhanced"
 model_path = "/content/models/cdan_denseunet.pt"
 # -------- Create output directory --------
 os.makedirs(output_dir, exist_ok=True)
