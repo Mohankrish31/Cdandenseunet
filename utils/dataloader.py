@@ -3,7 +3,7 @@ from torch.utils.data import Dataset, Dataloader
 import os
 from PIL import Image
 from torchvision import transforms
-# === Custom Dataset ===
+# === Dataset ===
 class cvccolondbDataset(Dataset):
     def __init__(self, enhanced_dir, high_dir, transform=None):
         self.enhanced_dir = enhanced_dir
