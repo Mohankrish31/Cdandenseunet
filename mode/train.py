@@ -39,4 +39,4 @@ with torch.no_grad():
             final_img = Image.fromarray(out_cv)
             final_img.save(os.path.join(output_dir, fname))
             print(f"✅ Enhanced & saved (train): {fname}")
-print("🎉 All training images processed and saved to:", output_dir) how to run  this training code
+print("🎉 All training images processed and saved to:", output_dir)
