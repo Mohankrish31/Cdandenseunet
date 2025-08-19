@@ -38,9 +38,9 @@ transform = transforms.Compose([
 ])
 
 # === Paths (example usage) ===
-train_enhanced_dir = "/content/outputs/train_enhanced"
+train_enhanced_dir = "/content/drive/MyDrive/Colon_Enhanced/train_enhanced"
 train_high_dir = "/content/cvccolondbsplit/train/high"
-val_enhanced_dir = "/content/outputs/val_enhanced"
+val_enhanced_dir = "/content/drive/MyDrive/Colon_Enhanced/val_enhanced"
 val_high_dir = "/content/cvccolondbsplit/val/high"
 
 # === Create Dataset Instances ===
