@@ -192,7 +192,7 @@ class DenseUNetCBAM(nn.Module):
             self.dec_blocks.append(db)
             dec_channels = db.out_channels
             if use_cbam_decoder:
-                self.cbam_dec.append(CBAM(dec_channels))=
+                self.cbam_dec.append(CBAM(dec_channels))
         # Final conv to output
         self.final_conv = nn.Sequential(
             nn.Conv2d(dec_channels, 64, kernel_size=3, padding=1, bias=False),
