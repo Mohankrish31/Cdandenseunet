@@ -28,16 +28,15 @@ args = parser.parse_args()
 if args.mode == "train":
     input_dir = "/content/cvccolondbsplit/train/low"
     high_dir = "/content/cvccolondbsplit/train/high"
-    output_dir = "/content/outputs/train_enhanced"
+    output_dir = "/content/drive/MyDrive/Colon_Enhanced/train_enhanced"
 elif args.mode == "val":
     input_dir = "/content/cvccolondbsplit/val/low"
     high_dir = "/content/cvccolondbsplit/val/high"
-    output_dir = "/content/outputs/val_enhanced"
+    output_dir = "/content/drive/MyDrive/Colon_Enhanced/val_enhanced"
 elif args.mode == "test":
     input_dir = "/content/cvccolondbsplit/test/low"
     high_dir = "/content/cvccolondbsplit/test/high"
-    output_dir = "/content/outputs/test_enhanced"
-
+    output_dir = "/content/drive/MyDrive/Colon_Enhanced/test_enhanced"
 os.makedirs(output_dir, exist_ok=True)
 
 # -------- Setup device --------
