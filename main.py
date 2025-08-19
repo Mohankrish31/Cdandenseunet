@@ -1,0 +1,283 @@
+# === main.py ===
+import os
+import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+from PIL import Image
+import lpips
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+import cv2
+from models.cdan_denseunet import cdan_denseunet  # Your model file
+# ===================== Dataset =====================
+class CVCCOLONDBSplitDataset(Dataset):
+    def __init__(self, enhanced_dir, high_dir, transform=None):
+        self.enhanced_dir = enhanced_dir
+        self.high_dir = high_dir
+        self.transform = transform
+        self.image_names = sorted(os.listdir(enhanced_dir))
+    def __len__(self):
+        return len(self.image_names)
+    def __getitem__(self, idx):
+        enhanced_path = os.path.join(self.enhanced_dir, self.image_names[idx])
+        high_path = os.path.join(self.high_dir, self.image_names[idx])
+        enhanced_img = Image.open(enhanced_path).convert("RGB")
+        high_img = Image.open(high_path).convert("RGB")
+        if self.transform:
+            enhanced_img = self.transform(enhanced_img)
+            high_img = self.transform(high_img)
+        return enhanced_img, high_img
+# ===================== Sobel Edge Loss =====================
+class SobelEdgeLoss(nn.Module):
+    def __init__(self):
+        super(SobelEdgeLoss, self).__init__()
+        sobel_x = torch.tensor([[[-1.,0.,1.],[-2.,0.,2.],[-1.,0.,1.]]])
+        sobel_y = torch.tensor([[[-1.,-2.,-1.],[0.,0.,0.],[1.,2.,1.]]])
+        self.sobel_x = sobel_x.unsqueeze(0)
+        self.sobel_y = sobel_y.unsqueeze(0)
+    def forward(self, pred, target):
+        pred_gray = torch.mean(pred, dim=1, keepdim=True)
+        target_gray = torch.mean(target, dim=1, keepdim=True)
+        device = pred.device
+        sobel_x = self.sobel_x.to(device)
+        sobel_y = self.sobel_y.to(device)
+        pred_gx = F.conv2d(pred_gray, sobel_x, padding=1)
+        pred_gy = F.conv2d(pred_gray, sobel_y, padding=1)
+        target_gx = F.conv2d(target_gray, sobel_x, padding=1)
+        target_gy = F.conv2d(target_gray, sobel_y, padding=1)
+        pred_grad = torch.sqrt(pred_gx**2 + pred_gy**2 + 1e-6)
+        target_grad = torch.sqrt(target_gx**2 + target_gy**2 + 1e-6)
+        return F.l1_loss(pred_grad, target_grad)
+# ===================== SSIM Loss =====================
+def gaussian(window_size, sigma):
+    gauss = torch.Tensor([math.exp(-(x - window_size//2)**2 / (2*sigma**2)) for x in range(window_size)])
+    return gauss / gauss.sum()
+def create_window(window_size, channel):
+    _1D_window = gaussian(window_size, 1.5).unsqueeze(1)
+    _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
+    window = _2D_window.expand(channel,1,window_size,window_size).contiguous()
+    return window
+class SSIMLoss(nn.Module):
+    def __init__(self, window_size=11, size_average=True):
+        super(SSIMLoss, self).__init__()
+        self.window_size = window_size
+        self.size_average = size_average
+        self.channel = 1
+        self.window = create_window(window_size, self.channel)
+    def forward(self, img1, img2):
+        (_, channel, _, _) = img1.size()
+        if channel == self.channel and self.window.data.type() == img1.data.type():
+            window = self.window
+        else:
+            window = create_window(self.window_size, channel).to(img1.device)
+            self.window = window
+            self.channel = channel
+        mu1 = F.conv2d(img1, window, padding=self.window_size//2, groups=channel)
+        mu2 = F.conv2d(img2, window, padding=self.window_size//2, groups=channel)
+        mu1_sq = mu1.pow(2)
+        mu2_sq = mu2.pow(2)
+        mu1_mu2 = mu1 * mu2
+        sigma1_sq = F.conv2d(img1*img1, window, padding=self.window_size//2, groups=channel) - mu1_sq
+        sigma2_sq = F.conv2d(img2*img2, window, padding=self.window_size//2, groups=channel) - mu2_sq
+        sigma12 = F.conv2d(img1*img2, window, padding=self.window_size//2, groups=channel) - mu1_mu2
+        C1 = 0.01**2
+        C2 = 0.03**2
+        ssim_map = ((2*mu1_mu2 + C1)*(2*sigma12 + C2)) / ((mu1_sq+mu2_sq+C1)*(sigma1_sq+sigma2_sq+C2))
+        return 1 - ssim_map.mean() if self.size_average else 1 - ssim_map.mean(1).mean(1).mean(1)
+# ===================== Range Loss =====================
+class RangeLoss(nn.Module):
+    def __init__(self, target_brightness=100/255., target_contrast=35/255.):
+        super(RangeLoss, self).__init__()
+        self.tb = target_brightness
+        self.tc = target_contrast
+    def forward(self, img):
+        gray = torch.mean(img, dim=1, keepdim=True)
+        brightness = torch.mean(gray)
+        contrast = torch.std(gray)
+        return (brightness - self.tb)**2 + (contrast - self.tc)**2
+# ===================== Total Loss =====================
+mse_loss_fn = nn.MSELoss()
+edge_loss_fn = SobelEdgeLoss()
+ssim_loss_fn = SSIMLoss()
+range_loss_fn = RangeLoss()
+def total_loss_fn(pred, target, w_mse, w_lpips, w_edge, w_ssim, w_range, lpips_model):
+    mse = mse_loss_fn(pred, target)
+    edge = edge_loss_fn(pred, target)
+    lp = lpips_model(2*pred-1, 2*target-1).mean()
+    ssim = ssim_loss_fn(pred, target)
+    rng = range_loss_fn(pred)
+    total = w_mse*mse + w_lpips*lp + w_edge*edge + w_ssim*ssim + w_range*rng
+    return total, mse, lp, edge, ssim, rng
+# ===================== Metric Functions =====================
+from skimage.metrics import structural_similarity as compare_ssim
+def calculate_psnr(img1, img2):
+    mse = np.mean((img1-img2)**2)
+    if mse == 0: return 100
+    PIXEL_MAX = 1.0
+    return 10*math.log10((PIXEL_MAX**2)/mse)
+def calculate_ssim(img1,img2):
+    ssim = 0
+    for i in range(3):
+        ssim += compare_ssim(img1[...,i], img2[...,i], data_range=1.0)
+    return ssim/3
+def calculate_ebcm(img1,img2):
+    gray1 = cv2.cvtColor((img1*255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
+    gray2 = cv2.cvtColor((img2*255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
+    sobelx1 = cv2.Sobel(gray1, cv2.CV_64F,1,0,ksize=3)
+    sobely1 = cv2.Sobel(gray1, cv2.CV_64F,0,1,ksize=3)
+    sobelx2 = cv2.Sobel(gray2, cv2.CV_64F,1,0,ksize=3)
+    sobely2 = cv2.Sobel(gray2, cv2.CV_64F,0,1,ksize=3)
+    edge_mag1 = np.sqrt(sobelx1**2+sobely1**2)
+    edge_mag2 = np.sqrt(sobelx2**2+sobely2**2)
+    edge_mag1[edge_mag1==0] = 1e-6
+    return np.mean(np.minimum(edge_mag1,edge_mag2)/np.maximum(edge_mag1,edge_mag2))
+# ===================== Train Function =====================
+def train_model(model, train_loader, val_loader, optimizer, lpips_model, num_epochs, device,
+                w_mse,w_lpips,w_edge,w_ssim,w_range, early_stopping_patience=10):
+    best_val_loss = float('inf')
+    patience_counter = 0
+    for epoch in range(num_epochs):
+        model.train()
+        running_loss = 0
+        for input_img, target_img in train_loader:
+            input_img, target_img = input_img.to(device), target_img.to(device)
+            optimizer.zero_grad()
+            total_loss, mse_val, lp, edge, ssim_val, rng_val = total_loss_fn(
+                input_img,target_img,w_mse,w_lpips,w_edge,w_ssim,w_range,lpips_model
+            )
+            total_loss.backward()
+            optimizer.step()
+            running_loss += total_loss.item()
+        avg_train_loss = running_loss / len(train_loader)
+        # Validation
+        model.eval()
+        val_running_loss = 0
+        with torch.no_grad():
+            for input_img, target_img in val_loader:
+                input_img, target_img = input_img.to(device), target_img.to(device)
+                total_loss, mse_val, lp, edge, ssim_val, rng_val = total_loss_fn(
+                    input_img,target_img,w_mse,w_lpips,w_edge,w_ssim,w_range,lpips_model
+                )
+                val_running_loss += total_loss.item()
+        avg_val_loss = val_running_loss / len(val_loader)
+        print(f"Epoch [{epoch+1}/{num_epochs}] | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+        # Early stopping
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            patience_counter = 0
+            torch.save(model.state_dict(), 'best_cdan_denseunet.pth')
+            print("✔️ Saved best model")
+        else:
+            patience_counter +=1
+            if patience_counter >= early_stopping_patience:
+                print(f"⏹️ Early stopping at epoch {epoch+1}")
+                break
+# ===================== Test Function =====================
+def test_model(model, test_enhanced_dir, test_high_dir, device):
+    model.eval()
+    lpips_model = lpips.LPIPS(net='vgg').to(device)
+    filenames = sorted(os.listdir(test_high_dir))
+    results = []
+    for fname in tqdm(filenames, desc="Testing"):
+        high_path = os.path.join(test_high_dir, fname)
+        enh_path = os.path.join(test_enhanced_dir, fname)
+        high_img = cv2.imread(high_path)
+        enh_img  = cv2.imread(enh_path)
+        if high_img is None or enh_img is None:
+            continue
+        high_img = cv2.cvtColor(high_img, cv2.COLOR_BGR2RGB)/255.0
+        enh_img  = cv2.cvtColor(enh_img, cv2.COLOR_BGR2RGB)/255.0
+        if high_img.shape != enh_img.shape:
+            enh_img = cv2.resize(enh_img,(high_img.shape[1], high_img.shape[0]))
+        psnr_val = calculate_psnr(enh_img, high_img)
+        ssim_val = calculate_ssim(enh_img, high_img)
+        ebcm_val = calculate_ebcm(high_img, enh_img)
+        with torch.no_grad():
+            high_tensor = torch.tensor(high_img).permute(2,0,1).unsqueeze(0).float().to(device)
+            enh_tensor  = torch.tensor(enh_img).permute(2,0,1).unsqueeze(0).float().to(device)
+            lpips_val = lpips_model(enh_tensor, high_tensor).item()
+        results.append({"filename":fname,"PSNR":psnr_val,"SSIM":ssim_val,"LPIPS":lpips_val,"EBCM":ebcm_val})
+    df = pd.DataFrame(results)
+    df.to_csv("test_metrics_cdan_denseunet.csv",index=False)
+    print("✅ Saved test metrics to 'test_metrics_cdan_denseunet.csv'")
+    return df
+# ===================== Plot Metrics =====================
+def plot_metrics(df):
+    filenames = df["filename"]
+    metrics = ["PSNR","SSIM","LPIPS","EBCM"]
+    plt.figure(figsize=(14,8))
+    for i,m in enumerate(metrics):
+        plt.subplot(2,2,i+1)
+        plt.plot(filenames, df[m], marker='o')
+        plt.xticks(rotation=90)
+        plt.title(f"{m} per Image")
+        plt.xlabel("Image")
+        plt.ylabel(m)
+        plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+    # Summary bar chart
+    means = [df[m].mean() for m in metrics]
+    stds  = [df[m].std() for m in metrics]
+    plt.figure(figsize=(8,6))
+    x_pos = np.arange(len(metrics))
+    colors = ['blue','green','red','purple']
+    plt.bar(x_pos, means, yerr=stds, align='center', color=colors, capsize=10)
+    plt.xticks(x_pos, metrics)
+    plt.ylabel("Metric Value")
+    plt.title("Summary Metrics (Mean ± Std)")
+    for i,(mean,std) in enumerate(zip(means,stds)):
+        plt.text(i, mean+std+0.01,f"{mean:.3f}±{std:.3f}", ha='center')
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.show()
+# ===================== Main =====================
+if __name__=="__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # Hyperparameters
+    learning_rate = 1e-4
+    weight_decay = 1e-5
+    num_epochs = 100
+    batch_size = 16
+    early_stopping_patience = 10
+    # Loss weights
+    w_mse = 0.4
+    w_lpips = 0.1
+    w_edge = 0.15
+    w_ssim = 0.35
+    w_range = 0.1
+    # Paths
+    train_enhanced_dir = "/content/outputs/train_enhanced"
+    train_high_dir     = "/content/cvccolondbsplit/train/high"
+    val_enhanced_dir   = "/content/outputs/val_enhanced"
+    val_high_dir       = "/content/cvccolondbsplit/val/high"
+    test_enhanced_dir  = "/content/outputs/test_enhanced"
+    test_high_dir      = "/content/cvccolondbsplit/test/high"
+    # Transforms
+    transform = transforms.Compose([
+        transforms.Resize((224,224)),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2),
+        transforms.ToTensor()
+    ])
+    # Datasets
+    train_dataset = CVCCOLONDBSplitDataset(train_enhanced_dir, train_high_dir, transform)
+    val_dataset   = CVCCOLONDBSplitDataset(val_enhanced_dir, val_high_dir, transform)
+    train_loader  = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader    = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    # Model & Optimizer
+    model = cdan_denseunet(in_channels=3, base_channels=32).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    lpips_model = lpips.LPIPS(net='vgg').to(device)
+    # Train
+    train_model(model, train_loader, val_loader, optimizer, lpips_model,
+                num_epochs, device, w_mse, w_lpips, w_edge, w_ssim, w_range, early_stopping_patience)
+    # Load best model & Test
+    model.load_state_dict(torch.load('best_cdan_denseunet.pth'))
+    df_test = test_model(model, test_enhanced_dir, test_high_dir, device)
+    # Plot metrics
+    plot_metrics(df_test)
