@@ -10,7 +10,7 @@ from torch.utils.data import Dataset,DataLoader
 sys.path.append('/content/Cdandenseunet')  # Adjust path if needed in Colab
 # -------- Import utils --------
 from utils.dataloader import cvccolondbDataset, get_dataloader
-from utils.loss import custom_loss
+from utils.custom_loss import custom_loss
 from utils.metrics import calculate_psnr, calculate_ssim, calculate_ebcm, lpips_fn
 from utils.plot_loss import plot_loss
 from utils.plot_metrics import plot_metrics
