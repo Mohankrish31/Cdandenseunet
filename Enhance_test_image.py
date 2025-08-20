@@ -10,13 +10,11 @@ from models.cdan_denseunet import CDANDenseUNet
 # -------- Paths --------
 input_dir = "/content/cvccolondbsplit/test/low"   # Low-light test images
 output_dir = "/content/drive/MyDrive/Colon_Enhanced/test_enhanced"
-model_path = "saved_model/cdan_denseunet.pt"
+cdan_model_path = "saved_model/cdan_denseunet.pt"
 # -------- Create output directory --------
 os.makedirs(output_dir, exist_ok=True)
 # -------- Setup device --------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#  Define path to the saved model 
-cdan_model_path = "saved_models/cdan_denseunet.pt"
 # -------- Load model and weights --------
 cdan_model =  CDANDenseUNet(in_channels=3, base_channels=32).to(device)
 cdan_model.load_state_dict(torch.load(cdan_model_path, map_location=device), strict=False)
