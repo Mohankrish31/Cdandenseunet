@@ -227,9 +227,15 @@ class DenseUNetCBAM(nn.Module):
         return out
 # ------------------------ CDAN DenseUNet Wrapper ------------------------
 class CDANDenseUNet(nn.Module):
-    def __init__(self, **gen_kwargs):
+    def __init__(self, in_channels=3, base_channels=32):
         super().__init__()
-        self.generator = DenseUNetCBAM(**gen_kwargs)
+        self.in_channels = in_channels
+        self.base_channels = base_channels
+        self.init_conv = nn.Conv2d(in_channels, base_channels, kernel_size=3, padding=1)
+        self.generator = DenseUNetCBAM(
+        in_channels=gen_kwargs.get('in_channels', 3),
+        base_channels=gen_kwargs.get('base_channels', 32)
+        )
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.grl = GradReverse(lambda_=1.0)
         self.discriminator = None  # lazy init
