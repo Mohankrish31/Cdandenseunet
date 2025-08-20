@@ -6,7 +6,7 @@ from torchvision import transforms
 import sys
 # -------- Add model path --------
 sys.path.append('/content/Cdandenseunet')
-from models.cdan_denseunet import cdan_denseunet
+from models.cdan_denseunet import CDANDenseUNet
 # -------- Paths --------
 input_dir = "/content/cvccolondbsplit/train/low"  # Low-light training images
 output_dir = "/content/drive/MyDrive/Colon_Enhanced/train_enhanced"
