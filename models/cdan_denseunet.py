@@ -2,23 +2,24 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# ------------------------ CBAM ------------------------
+# ====================== CBAM ======================
 class ChannelAttention(nn.Module):
     def __init__(self, in_channels, reduction=16):
         super().__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.max_pool = nn.AdaptiveMaxPool2d(1)
         self.fc = nn.Sequential(
-            nn.Conv2d(in_channels, in_channels // reduction, 1, bias=False),
-            nn.ReLU(),
-            nn.Conv2d(in_channels // reduction, in_channels, 1, bias=False)
+            nn.Conv2d(in_channels, max(1, in_channels // reduction), 1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(max(1, in_channels // reduction), in_channels, 1, bias=False),
         )
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
         avg_out = self.fc(self.avg_pool(x))
         max_out = self.fc(self.max_pool(x))
-        return x * self.sigmoid(avg_out + max_out)
+        attn = self.sigmoid(avg_out + max_out)
+        return x * attn
 
 class SpatialAttention(nn.Module):
     def __init__(self, kernel_size=7):
@@ -30,8 +31,9 @@ class SpatialAttention(nn.Module):
     def forward(self, x):
         avg_out = torch.mean(x, dim=1, keepdim=True)
         max_out, _ = torch.max(x, dim=1, keepdim=True)
-        x = torch.cat([avg_out, max_out], dim=1)
-        return x * self.sigmoid(self.conv(x))
+        cat = torch.cat([avg_out, max_out], dim=1)
+        attn = self.sigmoid(self.conv(cat))
+        return x * attn
 
 class CBAM(nn.Module):
     def __init__(self, channels, reduction=16, kernel_size=7):
@@ -44,37 +46,55 @@ class CBAM(nn.Module):
         x = self.sa(x)
         return x
 
-# ------------------------ Dense Block ------------------------
+# ================= Dense blocks (fixed) =================
 class _DenseLayer(nn.Module):
-    def __init__(self, in_channels, growth_rate):
+    def __init__(self, in_channels, growth_rate, drop_rate=0.0):
         super().__init__()
-        self.norm = nn.BatchNorm2d(in_channels)
+        self.norm = nn.BatchNorm2d(in_channels)  # matches current channels dynamically
         self.relu = nn.ReLU(inplace=True)
         self.conv = nn.Conv2d(in_channels, growth_rate, kernel_size=3, stride=1, padding=1, bias=False)
+        self.drop_rate = drop_rate
 
     def forward(self, x):
         out = self.conv(self.relu(self.norm(x)))
-        return torch.cat([x, out], 1)
+        if self.drop_rate > 0:
+            out = F.dropout(out, p=self.drop_rate, training=self.training)
+        return torch.cat([x, out], dim=1)  # channel grows by growth_rate
 
-class DenseBlock(nn.Module):
-    def __init__(self, in_channels, growth_rate, num_layers=2):
+class _DenseBlock(nn.Module):
+    def __init__(self, num_layers, in_channels, growth_rate, drop_rate=0.0):
         super().__init__()
-        self.layers = nn.ModuleList([
-            _DenseLayer(in_channels + i * growth_rate, growth_rate) for i in range(num_layers)
-        ])
+        layers = []
+        channels = in_channels
+        for _ in range(num_layers):
+            layers.append(_DenseLayer(channels, growth_rate, drop_rate))
+            channels += growth_rate
+        self.block = nn.Sequential(*layers)
+        self.out_channels = channels  # in + num_layers*growth_rate
 
     def forward(self, x):
-        for layer in self.layers:
-            x = layer(x)
-        return x
+        return self.block(x)
 
-# ------------------------ Encoder & Decoder ------------------------
+class Bottleneck(nn.Module):
+    def __init__(self, in_channels, num_layers, growth_rate, drop_rate=0.0):
+        super().__init__()
+        self.dense_block = _DenseBlock(num_layers, in_channels, growth_rate, drop_rate)
+        self.out_channels = self.dense_block.out_channels
+
+    def forward(self, x):
+        return self.dense_block(x)
+
+# ============ Encoder & Decoder (with consistent shapes) ============
 class EncoderBlock(nn.Module):
     def __init__(self, in_channels, growth_rate, num_layers=2, use_cbam=False):
         super().__init__()
-        self.db = DenseBlock(in_channels, growth_rate, num_layers)
-        self.cbam = CBAM(in_channels + num_layers * growth_rate) if use_cbam else None
+        self.db = _DenseBlock(num_layers=num_layers, in_channels=in_channels, growth_rate=growth_rate)
+        self.cbam = CBAM(self.db.out_channels) if use_cbam else None
         self.pool = nn.MaxPool2d(2)
+
+    @property
+    def out_channels(self):
+        return self.db.out_channels
 
     def forward(self, x):
         x = self.db(x)
@@ -85,64 +105,107 @@ class EncoderBlock(nn.Module):
         return x, skip
 
 class DecoderBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, use_cbam=False):
+    """
+    Upsample to skip channels, concat, dense-block (grows), then 1x1 compress back to out_channels (= skip_channels).
+    """
+    def __init__(self, in_channels, skip_channels, num_layers=2, use_cbam=False):
         super().__init__()
-        self.up = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2)
-        self.db = DenseBlock(out_channels * 2, growth_rate=out_channels // 2, num_layers=2)
-        self.cbam = CBAM(out_channels * 2) if use_cbam else None
+        self.up = nn.ConvTranspose2d(in_channels, skip_channels, kernel_size=2, stride=2)
+
+        # After up: channels = skip_channels; after concat: 2*skip_channels
+        self.db = _DenseBlock(num_layers=num_layers,
+                              in_channels=2 * skip_channels,
+                              growth_rate=skip_channels // 2)  # adds skip_channels
+
+        # Now channels = 2*skip + skip = 3*skip. Compress back to skip.
+        self.compress = nn.Conv2d(2 * skip_channels + num_layers * (skip_channels // 2),
+                                  skip_channels, kernel_size=1, bias=False)
+
+        self.cbam = CBAM(skip_channels) if use_cbam else None
+
+    @property
+    def out_channels(self):
+        # After compression, channels equal skip_channels
+        return self.compress.out_channels if hasattr(self.compress, 'out_channels') else None
 
     def forward(self, x, skip):
         x = self.up(x)
+        # spatial size should match skip; if off by 1 due to odd sizes, center-crop skip
+        if x.shape[-1] != skip.shape[-1] or x.shape[-2] != skip.shape[-2]:
+            dh = skip.shape[-2] - x.shape[-2]
+            dw = skip.shape[-1] - x.shape[-1]
+            skip = skip[:, :, dh // 2: skip.shape[-2] - (dh - dh // 2),
+                             dw // 2: skip.shape[-1] - (dw - dw // 2)]
         x = torch.cat([x, skip], dim=1)
         x = self.db(x)
+        x = self.compress(x)
         if self.cbam:
             x = self.cbam(x)
         return x
 
-# ------------------------ CDAN DenseUNet (Light) ------------------------
+# ================= CDAN-DenseUNet (Light) =================
 class CDANDenseUNet(nn.Module):
+    """
+    Light version:
+      - 3 encoders + 3 decoders
+      - base_channels = 32, growth_rate = 12 by default
+      - CBAM only in: last encoder, bottleneck, last decoder
+    """
     def __init__(self, in_channels=3, out_channels=3, base_channels=24, growth_rate=12):
         super().__init__()
-        self.init_conv = nn.Conv2d(in_channels, base_channels, 3, padding=1)
+        self.init_conv = nn.Conv2d(in_channels, base_channels, kernel_size=3, stride=1, padding=1, bias=False)
 
-        # Encoder: only 3
-        self.enc1 = EncoderBlock(base_channels, growth_rate, num_layers=2, use_cbam=False)
-        self.enc2 = EncoderBlock(base_channels + 2 * growth_rate, growth_rate, num_layers=2, use_cbam=False)
-        self.enc3 = EncoderBlock(base_channels + 4 * growth_rate, growth_rate, num_layers=2, use_cbam=True)  # CBAM only here
+        # ---- Encoders ----
+        # enc1 in: b -> out: b + 2g
+        self.enc1 = EncoderBlock(in_channels=base_channels, growth_rate=growth_rate, num_layers=2, use_cbam=False)
+        # enc2 in: b+2g -> out: b+4g
+        self.enc2 = EncoderBlock(in_channels=self.enc1.out_channels, growth_rate=growth_rate, num_layers=2, use_cbam=False)
+        # enc3 in: b+4g -> out: b+6g  (CBAM here)
+        self.enc3 = EncoderBlock(in_channels=self.enc2.out_channels, growth_rate=growth_rate, num_layers=2, use_cbam=True)
 
-        # Bottleneck
-        bottleneck_in = base_channels + 6 * growth_rate
-        self.bottleneck = DenseBlock(bottleneck_in, growth_rate, num_layers=2)
-        self.cbam_bottleneck = CBAM(bottleneck_in + 2 * growth_rate)
+        # ---- Bottleneck ----
+        self.bottleneck = Bottleneck(in_channels=self.enc3.out_channels, num_layers=2, growth_rate=growth_rate)
+        self.cbam_bottleneck = CBAM(self.bottleneck.out_channels)
 
-        # Decoder: only 3
-        self.dec3 = DecoderBlock(bottleneck_in + 2 * growth_rate, base_channels + 4 * growth_rate, use_cbam=False)
-        self.dec2 = DecoderBlock(base_channels + 4 * growth_rate, base_channels + 2 * growth_rate, use_cbam=False)
-        self.dec1 = DecoderBlock(base_channels + 2 * growth_rate, base_channels, use_cbam=True)  # CBAM only here
+        # ---- Decoders ----
+        # dec3: in <- bottleneck, skip <- enc3
+        self.dec3 = DecoderBlock(in_channels=self.bottleneck.out_channels,
+                                 skip_channels=self.enc3.out_channels,
+                                 num_layers=2, use_cbam=False)
 
-        # Final
-        self.final = nn.Conv2d(base_channels * 2, out_channels, kernel_size=1)
+        # dec2: in <- dec3(out = enc3.out_channels), skip <- enc2
+        self.dec2 = DecoderBlock(in_channels=self.enc3.out_channels,
+                                 skip_channels=self.enc2.out_channels,
+                                 num_layers=2, use_cbam=False)
+
+        # dec1: in <- dec2(out = enc2.out_channels), skip <- enc1 (CBAM here)
+        self.dec1 = DecoderBlock(in_channels=self.enc2.out_channels,
+                                 skip_channels=self.enc1.out_channels,
+                                 num_layers=2, use_cbam=True)
+
+        # Final 1x1: channels = enc1.out_channels -> out_channels
+        self.final = nn.Conv2d(self.enc1.out_channels, out_channels, kernel_size=1)
 
     def forward(self, x):
         x = self.init_conv(x)
 
-        x, s1 = self.enc1(x)
-        x, s2 = self.enc2(x)
-        x, s3 = self.enc3(x)
+        x, s1 = self.enc1(x)   # s1: [B, b+2g, H/1, W/1]
+        x, s2 = self.enc2(x)   # s2: [B, b+4g, H/2, W/2]
+        x, s3 = self.enc3(x)   # s3: [B, b+6g, H/4, W/4]
 
-        x = self.bottleneck(x)
+        x = self.bottleneck(x)           # [B, b+8g, H/8, W/8]
         x = self.cbam_bottleneck(x)
 
-        x = self.dec3(x, s3)
-        x = self.dec2(x, s2)
-        x = self.dec1(x, s1)
+        x = self.dec3(x, s3)             # -> [B, b+6g, H/4, W/4]
+        x = self.dec2(x, s2)             # -> [B, b+4g, H/2, W/2]
+        x = self.dec1(x, s1)             # -> [B, b+2g, H,   W  ]
 
-        out = self.final(x)
+        out = self.final(x)              # -> [B, out_channels, H, W]
         return out
 
-# ------------------------ Test ------------------------
+# ===================== Quick test =====================
 if __name__ == "__main__":
-    model = CDANDenseUNet()
-    dummy = torch.randn(8, 3, 224, 224)
-    out = model(dummy)
-    print("Output shape:", out.shape)
+    model = CDANDenseUNet(in_channels=3, out_channels=3, base_channels=32, growth_rate=12)
+    x = torch.randn(8, 3, 224, 224)
+    y = model(x)
+    print("Output shape:", y.shape)
