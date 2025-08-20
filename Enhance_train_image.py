@@ -33,8 +33,10 @@ with torch.no_grad():
             img = Image.open(img_path).convert('RGB')
             inp = transform(img).unsqueeze(0).to(device)
             # Model inference
-            out = model(inp).cpu().clamp(0, 1)
-            out_img = to_pil(out)
+            outs = model(inp).cpu().clamp(0, 1)  # [B, 3, H, W]
+    for i in range(outs.size(0)):
+        img = to_pil_image(outs[i])      # convert each [3, H, W]
+        img.save(f"enhanced_{i}.png")
             # Save result
             out_cv = np.array(out_img)
             final_img = Image.fromarray(out_cv)
