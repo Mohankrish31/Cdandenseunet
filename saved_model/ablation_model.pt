@@ -11,7 +11,7 @@ import math
 from models.unet import unet
 from models.denseunet import denseunet
 from models.cdan_unet import cdan_unet
-from models.cdan_denseunet import cdan_denseunet
+from models.cdan_denseunet import CDANDenseUNet
 # === Device ===
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # === LPIPS ===
