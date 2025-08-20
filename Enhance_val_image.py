@@ -9,7 +9,7 @@ from torchvision.transforms.functional import to_pil_image
 sys.path.append('/content/Cdandenseunet')
 from models.cdan_denseunet import CDANDenseUNet
 # -------- Paths --------
-input_dir = "/content/cvccolondbsplit/val/low"   # Low-light train images
+input_dir = "/content/cvccolondbsplit/val/low"   # Low-light test images
 output_dir = "/content/drive/MyDrive/Colon_Enhanced/val_enhanced"
 model_path = "/content/saved_model/cdan_denseunet.pt"
 # -------- Create output directory --------
@@ -33,17 +33,20 @@ with torch.no_grad():
             # Load and preprocess
             img = Image.open(img_path).convert('RGB')
             inp = transform(img).unsqueeze(0).to(device)
-            # Model inference
-            outs = model(inp).cpu().clamp(0, 1)  # [B, 3, H, W]
+            # Model inference (raw output, no clamp yet)
+            outs = model(inp).cpu().detach()
+            # Debug: check raw output range
+            print(f"🔎 {fname} -> raw output min: {outs.min().item():.4f}, max: {outs.max().item():.4f}")
+            # Rescale output to [0,1] range
+            outs = (outs - outs.min()) / (outs.max() - outs.min() + 1e-8)
+            # Debug: check normalized range
+            print(f"✅ {fname} -> normalized output min: {outs.min().item():.4f}, max: {outs.max().item():.4f}")
             # Process each output in batch
             for i in range(outs.size(0)):
-                out_img = to_pil_image(outs[i])              # Tensor → PIL
-                out_cv = np.array(out_img)                   # PIL → NumPy
-                # Alternative (direct tensor → NumPy, HWC format):
-                # out_cv = outs[i].cpu().detach().permute(1, 2, 0).numpy()
+                out_img = to_pil_image(outs[i])    # Tensor → PIL
+                out_cv = np.array(out_img)         # PIL → NumPy
                 # Save final enhanced image
-                final_img = Image.fromarray(out_cv)
                 save_path = os.path.join(output_dir, f"enhanced_{fname}")
-                final_img.save(save_path)
-                print(f"✅ Enhanced & saved (valid): {save_path}")
+                Image.fromarray(out_cv).save(save_path)
+                print(f"💾 Enhanced & saved (val): {save_path}")
 print("🎉 All valid images processed and saved to:", output_dir)
