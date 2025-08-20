@@ -16,7 +16,7 @@ os.makedirs(output_dir, exist_ok=True)
 # -------- Setup device --------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # -------- Load model and weights --------
-model =  CDANDenseUNet(in_channels=3, base_channels=32).to(device)
+cdan_model =  CDANDenseUNet(in_channels=3, base_channels=32).to(device)
 cdan_model.load_state_dict(torch.load(cdan_model_path, map_location=device), strict=False)
 model.eval()
 # -------- Preprocessing --------
