@@ -13,3 +13,12 @@ if not os.path.exists(cdan_model_path):
 # Load weights safely
 cdan_model.load_state_dict(torch.load(cdan_model_path, map_location=device))
 print("✅ CDAN DenseUNet loaded successfully.")
+# ------------------------ Test forward pass ------------------------
+dummy_input = torch.randn(8, 3, 224, 224).to(device)  # batch size 8, 3 channels, 224x224
+cdan_out, cdan_feat = cdan_model(dummy_input)
+ablation_out, ablation_feat = ablation_model(dummy_input)
+print("CDAN output shape:", cdan_out.shape)
+print("CDAN feature vector shape:", cdan_feat.shape)
+print("Ablation output shape:", ablation_out.shape)
+print("Ablation feature vector shape:", ablation_feat.shape)
+
