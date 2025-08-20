@@ -20,11 +20,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
 model.load_state_dict(torch.load(model_path, map_location=device))
 model.eval()
-# -------- Preprocessing --------
+# -------- Preprocessing (same as training) --------
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+    transforms.ToTensor()   # [0,1], no Normalize since training didn’t use it
 ])
 # -------- Enhance and save images --------
 with torch.no_grad():
@@ -34,20 +33,18 @@ with torch.no_grad():
             # Load and preprocess
             img = Image.open(img_path).convert('RGB')
             inp = transform(img).unsqueeze(0).to(device)
-            # Model inference (raw output, no clamp yet)
-            outs = model(inp).cpu().detach()
+            # Model inference
+            outs = model(inp).cpu().detach()  # [B, 3, H, W]
             # Debug: check raw output range
-            print(f"🔎 {fname} -> raw output min: {outs.min().item():.4f}, max: {outs.max().item():.4f}")
-            # Rescale output to [0,1] range
+            print(f"[{fname}] Raw min:", outs.min().item(), "Raw max:", outs.max().item())
+            # Normalize to [0,1] for saving
             outs = (outs - outs.min()) / (outs.max() - outs.min() + 1e-8)
             # Debug: check normalized range
-            print(f"✅ {fname} -> normalized output min: {outs.min().item():.4f}, max: {outs.max().item():.4f}")
+            print(f"[{fname}] Normalized min:", outs.min().item(), "max:", outs.max().item())
             # Process each output in batch
             for i in range(outs.size(0)):
-                out_img = to_pil_image(outs[i])    # Tensor → PIL
-                out_cv = np.array(out_img)         # PIL → NumPy
-                # Save final enhanced image
+                out_img = to_pil_image(outs[i])  # Tensor → PIL
                 save_path = os.path.join(output_dir, f"enhanced_{fname}")
-                Image.fromarray(out_cv).save(save_path)
-                print(f"💾 Enhanced & saved (test): {save_path}")
+                out_img.save(save_path)
+                print(f"✅ Enhanced & saved (test): {save_path}")
 print("🎉 All test images processed and saved to:", output_dir)
