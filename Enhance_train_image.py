@@ -40,4 +40,4 @@ with torch.no_grad():
             final_img = Image.fromarray(out_cv)
             final_img.save(os.path.join(output_dir, fname))
             print(f"✅ Enhanced & saved (train): {fname}")
-print("🎉 All train images processed and saved to:", output_dir) if i change the model path to cdan_model_path should i change model in model inference ?
+print("🎉 All train images processed and saved to:", output_dir) 
