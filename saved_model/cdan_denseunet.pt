@@ -1,27 +1,11 @@
-import os
 import torch
-from models.cdan_denseunet import CDANDenseUNet
-
+# Import your model class if it's in a separate file
+# from your_model_file import CDANDenseUNet
+# Instantiate the model
+model = CDANDenseUNet(in_channels=3, out_channels=3, base_channels=32, growth_rate=16, num_layers=3)
+# Optional: put the model on GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-os.makedirs("saved_model", exist_ok=True)
-cdan_model_path = "saved_model/cdan_denseunet.pt"
-
-# Initialize model
-cdan_model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
-
-# Save initial weights if not already saved
-if not os.path.exists(cdan_model_path):
-    torch.save(cdan_model.state_dict(), cdan_model_path)
-    print("✅ Initial weights saved.")
-
-# Load weights safely
-try:
-    cdan_model.load_state_dict(torch.load(cdan_model_path, map_location=device), strict=False)
-    print("✅ CDAN DenseUNet loaded successfully.")
-except RuntimeError as e:
-    print(f"❌ Error loading model: {e}")
-
-# Test forward pass
-dummy_input = torch.randn(8, 3, 224, 224).to(device)
-cdan_out = cdan_model(dummy_input)
-print("CDAN output shape:", cdan_out.shape)
+model = model.to(device)
+# Save the model weights (state_dict)
+torch.save(model.state_dict(), "cdandenseunet.pt")
+print("Model saved as cdandenseunet.pt")
