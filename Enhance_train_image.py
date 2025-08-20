@@ -33,7 +33,7 @@ with torch.no_grad():
             img = Image.open(img_path).convert('RGB')
             inp = transform(img).unsqueeze(0).to(device)
             # Model inference
-            out = model(inp).squeeze().cpu().clamp(0, 1)
+            out = model(inp).cpu().clamp(0, 1)
             out_img = to_pil(out)
             # Save result
             out_cv = np.array(out_img)
