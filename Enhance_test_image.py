@@ -12,7 +12,7 @@ from models.cdan_denseunet import CDANDenseUNet
 # -------- Paths --------
 input_dir = "/content/cvccolondbsplit/test/low"   # Low-light test images
 output_dir = "/content/drive/MyDrive/Colon_Enhanced/test_enhanced"
-cdan_model_path = "/content/Cdandenseunet/saved_models/cdan_denseunet.pth"  # Make sure this is the correct weights file
+cdan_model_path = "/content/Cdandenseunet/saved_models/cdan_denseunet.pt"  # Make sure this is the correct weights file
 
 # -------- Create output directory --------
 os.makedirs(output_dir, exist_ok=True)
