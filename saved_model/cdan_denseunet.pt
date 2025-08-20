@@ -1,33 +1,15 @@
 import os
 import torch
-# ------------------------ Folder ------------------------
-os.makedirs("/content/Cdandenseunet/saved_model", exist_ok=True)
+from models.cdan_denseunet import CDANDenseUNet
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# ------------------------ Initialize models ------------------------
+os.makedirs("saved_model", exist_ok=True)
+cdan_model_path = "saved_model/cdan_denseunet.pt"
+# Initialize model
 cdan_model = CDANDenseUNet(in_channels=3, base_channels=32, num_classes=2).to(device)
-ablation_model = CDANDenseUNet(in_channels=3, base_channels=32, num_classes=2).to(device)
-# ------------------------ Model paths ------------------------
-cdan_model_path = "/content/Cdandenseunet/saved_model/cdan_denseunet.pt"
-ablation_model_path = "/content/Cdandenseunet/saved_model/ablation_model.pt"
-# ------------------------ Load weights ------------------------
-if os.path.exists(cdan_model_path):
-    cdan_model.load_state_dict(torch.load(cdan_model_path, map_location=device))
-    print("✅ CDAN DenseUNet loaded successfully.")
-else:
-    print("⚠️ CDAN DenseUNet pretrained file not found. Starting from scratch.")
-
-if os.path.exists(ablation_model_path):
-    ablation_model.load_state_dict(torch.load(ablation_model_path, map_location=device))
-    print("✅ Ablation model loaded successfully.")
-else:
-    print("⚠️ Ablation model pretrained file not found. Starting from scratch.")
-# ------------------------ Test forward pass ------------------------
-dummy_input = torch.randn(1, 3, 256, 256).to(device)
-cdan_out, feat_vec = cdan_model(dummy_input)
-ablation_out, feat_vec2 = ablation_model(dummy_input)
-print("CDAN output shape:", cdan_out.shape)
-print("Ablation output shape:", ablation_out.shape)
-# ------------------------ Test domain classification ------------------------
-soft_preds = torch.randn(1, 2).to(device)  # 2 classes
-logits = cdan_model.domain_classify(feat_vec, soft_preds)
-print("Domain logits shape:", logits.shape)
+# Save initial weights if the file doesn't exist
+if not os.path.exists(cdan_model_path):
+    torch.save(cdan_model.state_dict(), cdan_model_path)
+    print("✅ Initial weights saved to saved_model/cdan_denseunet.pt")
+# Load weights safely
+cdan_model.load_state_dict(torch.load(cdan_model_path, map_location=device))
+print("✅ CDAN DenseUNet loaded successfully.")
