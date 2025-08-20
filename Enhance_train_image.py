@@ -37,9 +37,9 @@ with torch.no_grad():
     for i in range(outs.size(0)):
         img = to_pil_image(outs[i])      # convert each [3, H, W]
         img.save(f"enhanced_{i}.png")
-            # Save result
-            out_cv = np.array(out_img)
-            final_img = Image.fromarray(out_cv)
-            final_img.save(os.path.join(output_dir, fname))
-            print(f"✅ Enhanced & saved (train): {fname}")
+        # Save result
+        out_cv = np.array(out_img)
+        final_img = Image.fromarray(out_cv)
+        final_img.save(os.path.join(output_dir, fname))
+        print(f"✅ Enhanced & saved (train): {fname}")
 print("🎉 All train images processed and saved to:", output_dir) 
