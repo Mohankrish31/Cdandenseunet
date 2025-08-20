@@ -18,7 +18,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # -------- Load model and weights --------
 cdan_model =  CDANDenseUNet(in_channels=3, base_channels=32).to(device)
 cdan_model.load_state_dict(torch.load(cdan_model_path, map_location=device), strict=False)
-model.eval()
+cdan_model.eval()
 # -------- Preprocessing --------
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
@@ -33,7 +33,7 @@ with torch.no_grad():
             img = Image.open(img_path).convert('RGB')
             inp = transform(img).unsqueeze(0).to(device)
             # Model inference
-            out = model(inp).squeeze().cpu().clamp(0, 1)
+            out = cdan_model(inp).squeeze().cpu().clamp(0, 1)
             out_img = to_pil(out)
             # Save result
             out_cv = np.array(out_img)
