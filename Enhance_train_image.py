@@ -8,8 +8,8 @@ import sys
 sys.path.append('/content/Cdandenseunet')
 from models.cdan_denseunet import CDANDenseUNet
 # -------- Paths --------
-input_dir = "/content/cvccolondbsplit/test/low"   # Low-light test images
-output_dir = "/content/drive/MyDrive/Colon_Enhanced/test_enhanced"
+input_dir = "/content/cvccolondbsplit/train/low"   # Low-light test images
+output_dir = "/content/drive/MyDrive/Colon_Enhanced/train_enhanced"
 cdan_model_path = "/content/Cdandenseunet/saved_model/cdan_denseunet.pt"
 # -------- Create output directory --------
 os.makedirs(output_dir, exist_ok=True)
@@ -39,5 +39,5 @@ with torch.no_grad():
             out_cv = np.array(out_img)
             final_img = Image.fromarray(out_cv)
             final_img.save(os.path.join(output_dir, fname))
-            print(f"✅ Enhanced & saved (test): {fname}")
-print("🎉 All test images processed and saved to:", output_dir) if i change the model path to cdan_model_path should i change model in model inference ?
+            print(f"✅ Enhanced & saved (train): {fname}")
+print("🎉 All train images processed and saved to:", output_dir) if i change the model path to cdan_model_path should i change model in model inference ?
