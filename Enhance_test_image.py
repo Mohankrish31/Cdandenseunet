@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image
 from torchvision import transforms
 import sys
+from torchvision.transforms.functional import to_pil_image
 # -------- Add model path --------
 sys.path.append('/content/Cdandenseunet')
 from models.cdan_denseunet import CDANDenseUNet
