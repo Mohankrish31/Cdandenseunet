@@ -10,7 +10,7 @@ from models.cdan_denseunet import CDANDenseUNet
 # -------- Paths --------
 input_dir = "/content/cvccolondbsplit/train/low"  # Low-light training images
 output_dir = "/content/drive/MyDrive/Colon_Enhanced/train_enhanced"
-model_path="/content/saved_model/cdan_denseunet.pt"
+model_path="saved_model/cdan_denseunet.pt"
 # -------- Create output directory --------
 os.makedirs(output_dir, exist_ok=True)
 # -------- Setup device --------
