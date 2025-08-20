@@ -68,7 +68,7 @@ model_variants = {
     "Baseline_UNet": unet(),
     "DenseUNet": denseunet(),
     "CDAN_UNet": cdan_unet(),
-    "CDAN_DenseUNet": cdan_denseunet()
+    "CDANDenseUNet": cdan_denseunet()
 }
 # === Run Ablation Study ===
 results = []
