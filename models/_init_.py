@@ -1,7 +1,7 @@
 # int.py
 import torch
 import torch.nn.functional as F
-from cdan_denseunet import cdan_denseunet   # import your model
+from cdan_denseunet import CDANDenseUNet   # import your model
 def main():
     # ------------------- 1. Initialize model -------------------
     model = cdan_denseunet(
