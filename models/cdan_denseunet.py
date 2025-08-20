@@ -100,7 +100,7 @@ class DecoderBlock(nn.Module):
         return x
 
 # ------------------------ CDAN DenseUNet (Light) ------------------------
-class CDANDenseUNet_Light(nn.Module):
+class CDANDenseUNet(nn.Module):
     def __init__(self, in_channels=3, out_channels=3, base_channels=24, growth_rate=12):
         super().__init__()
         self.init_conv = nn.Conv2d(in_channels, base_channels, 3, padding=1)
@@ -142,7 +142,7 @@ class CDANDenseUNet_Light(nn.Module):
 
 # ------------------------ Test ------------------------
 if __name__ == "__main__":
-    model = CDANDenseUNet_Light()
-    dummy = torch.randn(1, 3, 224, 224)
+    model = CDANDenseUNet()
+    dummy = torch.randn(8, 3, 224, 224)
     out = model(dummy)
     print("Output shape:", out.shape)
