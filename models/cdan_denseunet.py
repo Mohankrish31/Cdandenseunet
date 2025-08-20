@@ -227,36 +227,25 @@ class DenseUNetCBAM(nn.Module):
         return out
 # ------------------------ CDAN DenseUNet Wrapper ------------------------
 class CDANDenseUNet(nn.Module):
-    def __init__(self, num_classes=2, grl_lambda=1.0, **gen_kwargs):
-        """gen_kwargs forwarded to DenseUNetCBAM"""
+    def __init__(self, **gen_kwargs):
         super().__init__()
         self.generator = DenseUNetCBAM(**gen_kwargs)
-        # we will extract a pooled feature vector from a chosen layer (e.g., bottleneck output)
-        # To keep simple, add a global pooling on top of generator's penultimate feature map.
-        # Option: you can modify DenseUNetCBAM to return intermediate features explicitly.
-        # Here we'll add a small feature extractor that expects bottleneck-level features.
         self.pool = nn.AdaptiveAvgPool2d(1)
-        # projection dimension depends on channel count: estimate by running a dummy tensor in practice
-        # For flexibility, we'll compute feature projection on the fly in forward (lazy way)
-        self.num_classes = num_classes
-        self.grl = GradReverse(lambda_=grl_lambda)
-        # discriminator will be initialized lazily once we know feat dim
-        self.discriminator = None
+        self.grl = GradReverse(lambda_=1.0)
+        self.discriminator = None  # lazy init
+        self.num_classes = gen_kwargs.get('num_classes', 2)
     def forward(self, x):
-        # forward through generator, but we need access to an intermediate "feature map" for CDAN.
-        # For simplicity we will hack into generator: run encoder until bottleneck then use pool on bottleneck
-        out = x
-        out = self.generator.init_conv(out)
         skips = []
+        out = self.generator.init_conv(x)
         for i, db in enumerate(self.generator.enc_blocks):
             out = db(out)
-            if self.generator.cbam_enc is not None:
+            if getattr(self.generator, 'cbam_enc', None) is not None:
                 out = self.generator.cbam_enc[i](out)
             skips.append(out)
             out = self.generator.trans_downs[i](out)
-        # bottleneck feature map
+        # Bottleneck
         bottleneck_feat = self.generator.bottleneck(out)
-        # generator output continues through decoder to produce enhanced image
+        # Decoder
         dec = bottleneck_feat
         for i, tu in enumerate(self.generator.trans_ups):
             dec = tu(dec)
@@ -265,42 +254,20 @@ class CDANDenseUNet(nn.Module):
                 dec = F.interpolate(dec, size=(skip.size(2), skip.size(3)), mode='bilinear', align_corners=False)
             dec = torch.cat([dec, skip], dim=1)
             dec = self.generator.dec_blocks[i](dec)
-            if self.generator.cbam_dec is not None:
+            if getattr(self.generator, 'cbam_dec', None) is not None:
                 dec = self.generator.cbam_dec[i](dec)
         gen_out = self.generator.final_conv(dec)
-        # Feature vector for discriminator
+        # Feature vector for optional domain classifier
         pooled = self.pool(bottleneck_feat)
-        feat_vec = pooled.view(pooled.size(0), -1)  # [B, feat_dim]
+        feat_vec = pooled.view(pooled.size(0), -1)
         return gen_out, feat_vec
     def init_discriminator(self, feat_dim, class_dim, hidden=1024):
         self.discriminator = CDANDiscriminator(feat_dim, class_dim, hidden)
     def domain_classify(self, feat_vec, soft_preds, grl_lambda=None):
-        """
-        feat_vec: [B, feat_dim]
-        soft_preds: [B, num_classes]  (softmax probabilities)
-        Returns discriminator logits (before sigmoid)
-        """
         if self.discriminator is None:
-            # lazily init
             self.init_discriminator(feat_vec.size(1), soft_preds.size(1))
         if grl_lambda is not None:
-            # temporarily change grl lambda
             self.grl.lambda_ = grl_lambda
         feat_rev = self.grl(feat_vec)
         logits = self.discriminator(feat_rev, soft_preds)
         return logits
-# ------------------------ Example usage helper ------------------------
-if __name__ == '__main__':
-    # quick smoke test
-    model = CDANDenseUNet(num_classes=2, grl_lambda=1.0,
-                          in_ch=3, out_ch=3, growth_rate=12, block_layers=(3,4,5),
-                          base_channels=32, use_cbam_encoder=True, use_cbam_decoder=True)
-    x = torch.randn(2,3,256,256)
-    gen_out, feat = model(x)
-    print('gen_out', gen_out.shape)
-    print('feat', feat.shape)
-    # fake soft preds
-    soft = F.softmax(torch.randn(2,2), dim=1)
-    logits = model.domain_classify(feat, soft, grl_lambda=0.5)
-    print('logits', logits.shape)
-# End of file
