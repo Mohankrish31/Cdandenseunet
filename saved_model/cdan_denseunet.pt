@@ -1,43 +1,27 @@
 import os
 import torch
 from models.cdan_denseunet import CDANDenseUNet
-# --- 1. Setup ---
-# Set the device to CUDA if available, otherwise CPU
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# Create the directory to save the model if it doesn't exist
 os.makedirs("saved_model", exist_ok=True)
 cdan_model_path = "saved_model/cdan_denseunet.pt"
-# Initialize both the main model and the ablation model
-# Assuming the ablation model is a second instance of the same class for this example
-cdan_model = CDANDenseUNet(in_channels=3, base_channels=32, num_classes=2).to(device)
-ablation_model = CDANDenseUNet(in_channels=3, base_channels=32, num_classes=2).to(device)
-# --- 2. Model Loading and Saving ---
-# Save initial weights only if the file does not already exist
-# This prevents overwriting a pre-trained model with random weights
+
+# Initialize model
+cdan_model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
+
+# Save initial weights if not already saved
 if not os.path.exists(cdan_model_path):
-    # This line saves the model's state dictionary to the specified path
     torch.save(cdan_model.state_dict(), cdan_model_path)
-    print("✅ Initial weights saved to saved_model/cdan_denseunet.pt")
-# Load weights safely. We use strict=False to handle the reported missing key.
+    print("✅ Initial weights saved.")
+
+# Load weights safely
 try:
-    # Load the state dictionary from the saved file
-    # The 'strict=False' flag tells PyTorch to ignore any keys in the model architecture
-    # that are not present in the loaded state dictionary (e.g., 'generator.init_conv.weight').
     cdan_model.load_state_dict(torch.load(cdan_model_path, map_location=device), strict=False)
-    print("✅ CDAN DenseUNet loaded successfully (with strict=False).")
+    print("✅ CDAN DenseUNet loaded successfully.")
 except RuntimeError as e:
-    print(f"❌ An error occurred during model loading: {e}")
-    print("This is likely due to a corrupted or mismatched model file.")
-    print("Please ensure your 'cdan_denseunet.pt' file is complete and correct.")
-# --- 3. Test Forward Pass ---
-# Create a dummy input tensor for testing
-dummy_input = torch.randn(8, 3, 224, 224).to(device) # batch size 8, 3 channels, 224x224
-# Pass the dummy input through both models
-cdan_out, cdan_feat = cdan_model(dummy_input)
-ablation_out, ablation_feat = ablation_model(dummy_input)
-# Print the shapes of the output tensors to verify the forward pass
-print("\n--- Model Output Shapes ---")
+    print(f"❌ Error loading model: {e}")
+
+# Test forward pass
+dummy_input = torch.randn(8, 3, 224, 224).to(device)
+cdan_out = cdan_model(dummy_input)
 print("CDAN output shape:", cdan_out.shape)
-print("CDAN feature vector shape:", cdan_feat.shape)
-print("Ablation output shape:", ablation_out.shape)
-print("Ablation feature vector shape:", ablation_feat.shape)
