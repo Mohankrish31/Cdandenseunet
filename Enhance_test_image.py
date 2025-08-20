@@ -10,22 +10,22 @@ from models.cdan_denseunet import CDANDenseUNet
 # -------- Paths --------
 input_dir = "/content/cvccolondbsplit/test/low"   # Low-light test images
 output_dir = "/content/drive/MyDrive/Colon_Enhanced/test_enhanced"
-model_path = "saved_model/cdan_denseunet.pt"
+cdan_model_path = "/content/Cdandenseunet/saved_models/cdan_denseunet.pth"  # Path to saved weights
 # -------- Create output directory --------
 os.makedirs(output_dir, exist_ok=True)
 # -------- Setup device --------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # -------- Load model and weights --------
-cdan_model =  CDANDenseUNet(in_channels=3, base_channels=32).to(device)
+cdan_model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
 cdan_model.load_state_dict(torch.load(cdan_model_path, map_location=device), strict=False)
-model.eval()
+cdan_model.eval()  # set to evaluation mode
 # -------- Preprocessing --------
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor()
 ])
 to_pil = transforms.ToPILImage()
-# -------- Enhance and save testing images (NO POSTPROCESSING) --------
+# -------- Enhance and save testing images --------
 with torch.no_grad():
     for fname in os.listdir(input_dir):
         if fname.lower().endswith(('.jpg', '.jpeg', '.png')):
@@ -33,11 +33,10 @@ with torch.no_grad():
             img = Image.open(img_path).convert('RGB')
             inp = transform(img).unsqueeze(0).to(device)
             # Model inference
-            out = model(inp).squeeze().cpu().clamp(0, 1)
+            out = cdan_model(inp).squeeze().cpu().clamp(0, 1)
             out_img = to_pil(out)
             # Save result
-            out_cv = np.array(out_img)
-            final_img = Image.fromarray(out_cv)
+            final_img = Image.fromarray(np.array(out_img))
             final_img.save(os.path.join(output_dir, fname))
-            print(f"✅ Enhanced & saved (test): {fname}")
+            print(f"✅ Enhanced & saved: {fname}")
 print("🎉 All test images processed and saved to:", output_dir)
