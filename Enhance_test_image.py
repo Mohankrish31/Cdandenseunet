@@ -10,7 +10,7 @@ from models.cdan_denseunet import CDANDenseUNet
 # -------- Paths --------
 input_dir = "/content/cvccolondbsplit/test/low"   # Low-light test images
 output_dir = "/content/drive/MyDrive/Colon_Enhanced/test_enhanced"
-cdan_model_path = "saved_model/cdan_denseunet.pt"
+cdan_model_path = "/content/Cdandenseunet/saved_model/cdan_denseunet.pt"
 # -------- Create output directory --------
 os.makedirs(output_dir, exist_ok=True)
 # -------- Setup device --------
