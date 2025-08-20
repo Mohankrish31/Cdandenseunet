@@ -1,52 +1,33 @@
-# ------------------------ Imports ------------------------
 import os
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Function
-
-# ------------------------ Create folder for saved models ------------------------
+# ------------------------ Folder ------------------------
 os.makedirs("/content/Cdandenseunet/saved_model", exist_ok=True)
-
-# ------------------------ Import your CDAN-DenseUNet model ------------------------
-from Cdandenseunet.models.cdan_denseunet import CDANDenseUNet  
-
-# ------------------------ Device ------------------------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# ------------------------ Initialize model ------------------------
-model = CDANDenseUNet(
-    in_channels=3,
-    base_channels=32
-)
-
-# ------------------------ Save model weights (optional) ------------------------
-torch.save(model.state_dict(), "/content/Cdandenseunet/saved_model/cdan_denseunet.pt")
-print("✅ Model weights saved to /content/Cdandenseunet/saved_model/cdan_denseunet.pt")
-
-# ------------------------ Define model paths ------------------------
+# ------------------------ Initialize models ------------------------
+cdan_model = CDANDenseUNet(in_channels=3, base_channels=32, num_classes=2).to(device)
+ablation_model = CDANDenseUNet(in_channels=3, base_channels=32, num_classes=2).to(device)
+# ------------------------ Model paths ------------------------
 cdan_model_path = "/content/Cdandenseunet/saved_model/cdan_denseunet.pt"
 ablation_model_path = "/content/Cdandenseunet/saved_model/ablation_model.pt"
-
-# ------------------------ Load CDAN DenseUNet ------------------------
-cdan_model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
+# ------------------------ Load weights ------------------------
 if os.path.exists(cdan_model_path):
     cdan_model.load_state_dict(torch.load(cdan_model_path, map_location=device))
     print("✅ CDAN DenseUNet loaded successfully.")
 else:
     print("⚠️ CDAN DenseUNet pretrained file not found. Starting from scratch.")
 
-# ------------------------ Load Ablation model ------------------------
-ablation_model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)  # replace class if different
 if os.path.exists(ablation_model_path):
     ablation_model.load_state_dict(torch.load(ablation_model_path, map_location=device))
     print("✅ Ablation model loaded successfully.")
 else:
     print("⚠️ Ablation model pretrained file not found. Starting from scratch.")
-
-# ------------------------ Optional: Test forward pass ------------------------
-dummy_input = torch.randn(8, 3, 224, 224).to(device)
-cdan_out = cdan_model(dummy_input)
-ablation_out = ablation_model(dummy_input)
+# ------------------------ Test forward pass ------------------------
+dummy_input = torch.randn(1, 3, 256, 256).to(device)
+cdan_out, feat_vec = cdan_model(dummy_input)
+ablation_out, feat_vec2 = ablation_model(dummy_input)
 print("CDAN output shape:", cdan_out.shape)
 print("Ablation output shape:", ablation_out.shape)
+# ------------------------ Test domain classification ------------------------
+soft_preds = torch.randn(1, 2).to(device)  # 2 classes
+logits = cdan_model.domain_classify(feat_vec, soft_preds)
+print("Domain logits shape:", logits.shape)
