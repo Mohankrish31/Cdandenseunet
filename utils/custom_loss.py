@@ -9,7 +9,7 @@ from PIL import Image
 import lpips
 import numpy as np
 from math import exp
-from models.cdan_denseunet import cdan_denseunet
+from models.cdan_denseunet import CDANDenseUNet
 from utils import plot_loss_curve   # ✅ Import plotting function
 # === Hyperparameters ===
 learning_rate = 1e-4
