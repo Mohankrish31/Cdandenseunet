@@ -8,7 +8,7 @@ import sys
 sys.path.append('/content/CbamDenseUnet')
 from models.cdan_denseunet import CDANDenseUNet   # ✅ use your architecture class
 # -------- Paths --------
-input_dir = "/content/cvccolondbsplit/train/low"  # Low-light training images
+input_dir = "/content/cvccolondbsplit/train/low"   # Low-light training images
 output_dir = "/content/outputs/train_enhanced"
 model_path = "/content/saved_model/cdan_denseunet.pt"   # ✅ weights file
 # -------- Create output directory --------
@@ -21,10 +21,12 @@ model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
 state_dict = torch.load(model_path, map_location=device)
 model.load_state_dict(state_dict)   # ✅ load weights into model
 model.eval()
-# -------- Preprocessing --------
+# -------- Preprocessing (normalize input to [-1,1]) --------
 transform = transforms.Compose([
-    transforms.Resize((224, 224)),  # match training resolution
-    transforms.ToTensor()
+    transforms.Resize((224, 224)),  
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.5, 0.5, 0.5],
+                         std=[0.5, 0.5, 0.5])   # normalize
 ])
 to_pil = transforms.ToPILImage()
 # -------- Enhance and save training images --------
@@ -33,8 +35,13 @@ with torch.no_grad():
         if fname.lower().endswith(('.jpg', '.jpeg', '.png')):
             img_path = os.path.join(input_dir, fname)
             img = Image.open(img_path).convert('RGB')
+            # Preprocess
             inp = transform(img).unsqueeze(0).to(device)
-            out = model(inp).squeeze().cpu().clamp(0, 1)
+            # Forward pass
+            out = model(inp).squeeze().cpu()
+            # -------- Denormalize output back to [0,1] --------
+            out = (out * 0.5 + 0.5).clamp(0, 1)
+            # Save
             out_img = to_pil(out)
             out_img.save(os.path.join(output_dir, fname))
             print(f"✅ Enhanced & saved (train): {fname}")
