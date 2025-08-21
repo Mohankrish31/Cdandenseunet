@@ -6,7 +6,7 @@ from torchvision import transforms
 # -------- Paths --------
 input_dir = "/content/cvccolondbsplit/test/low"   # Low-light training images
 output_dir = "/content/outputs/test_enhanced"     # Enhanced images
-model_path = "/content/saved_model/cdandenseunet.pt"  # Best model (full)
+model_path = "/content/saved_model/cdan_denseunet.pt"  # Best model (full)
 os.makedirs(output_dir, exist_ok=True)
 # -------- Device --------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
