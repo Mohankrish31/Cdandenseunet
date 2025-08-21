@@ -12,7 +12,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # -------- Paths --------
 input_dir = "/content/cvccolondbsplit/train/low"      # Low-light test images
 output_dir = "/content/outputs/train_enhanced"       # Folder to save enhanced images
-model_path = "/content/models/cdan_denseunet.pt"
+model_path = "/content/saved_model/cdan_denseunet.pt"
 # -------- Create output directory --------
 os.makedirs(output_dir, exist_ok=True)
 # -------- Load Model --------
