@@ -37,5 +37,5 @@ with torch.no_grad():
             out = model(inp).squeeze().cpu().clamp(0, 1)
             out_img = to_pil(out)
             out_img.save(os.path.join(output_dir, fname))
-            print(f"✅ Enhanced & saved (train): {fname}")
+            print(f"✅ Enhanced & saved (valid): {fname}")
 print("🎉 All valid images processed and saved to:", output_dir)
