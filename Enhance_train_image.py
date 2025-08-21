@@ -7,7 +7,7 @@ import sys
 
 # -------- Add model path --------
 sys.path.append('/content/CbamDenseUnet')
-from models.cdan_denseunet import CDANDenseUNet   # ✅ your architecture
+from models.cdan_denseunet import CDANDenseUNet   # ✅ your architecture class
 
 # -------- Paths --------
 input_dir = "/content/cvccolondbsplit/train/low"   # Low-light training images
@@ -28,10 +28,10 @@ state_dict = torch.load(model_path, map_location=device)
 model.load_state_dict(state_dict)   # ✅ load weights into model
 model.eval()
 
-# -------- Preprocessing (no Normalize) --------
+# -------- Preprocessing (NO Normalization) --------
 transform = transforms.Compose([
     transforms.Resize((224, 224)),  # match training resolution
-    transforms.ToTensor()           # ✅ keep values in [0,1]
+    transforms.ToTensor()           # [0,1] range
 ])
 to_pil = transforms.ToPILImage()
 
@@ -41,15 +41,12 @@ with torch.no_grad():
         if fname.lower().endswith(('.jpg', '.jpeg', '.png')):
             img_path = os.path.join(input_dir, fname)
             img = Image.open(img_path).convert('RGB')
-            inp = transform(img).unsqueeze(0).to(device)
+            
+            inp = transform(img).unsqueeze(0).to(device)   # [1,3,224,224]
+            out = model(inp).squeeze().cpu().clamp(0, 1)   # keep in [0,1]
 
-            out = model(inp).squeeze().cpu().clamp(0, 1)   # ✅ output in [0,1]
             out_img = to_pil(out)
             out_img.save(os.path.join(output_dir, fname))
-
-            # Debug info
             print(f"✅ Enhanced & saved (train): {fname}")
-            print(f"   Input range: {inp.min().item():.3f} → {inp.max().item():.3f}")
-            print(f"   Output range: {out.min().item():.3f} → {out.max().item():.3f}")
 
 print("🎉 All training images processed and saved to:", output_dir)
