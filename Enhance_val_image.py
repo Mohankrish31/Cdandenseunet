@@ -10,7 +10,7 @@ sys.path.append('/content/Cdandenseunet')
 from models.cdan_denseunet import CDANDenseUNet
 # -------- Paths --------
 input_dir = "/content/cvccolondbsplit/val/low"   # Low-light train images
-output_dir = "/content/drive/MyDrive/Colon_Enhanced/val_enhanced"
+output_dir = "/content/outputs/val_enhanced"
 model_path = "/content/saved_model/cdan_denseunet.pt"
 # -------- Create output directory --------
 os.makedirs(output_dir, exist_ok=True)
