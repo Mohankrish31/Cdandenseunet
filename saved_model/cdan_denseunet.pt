@@ -1,5 +1,6 @@
 # === train_cdandenseunet.py ===
 import os
+import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,36 +9,62 @@ from torchvision import transforms
 from PIL import Image
 import lpips
 from math import exp
+# ---- your model ----
 from models.cdan_denseunet import CDANDenseUNet
-from utils import plot_loss_curve   # Optional plotting
+# optional, if you have it:
+try:
+    from utils import plot_loss_curve
+except Exception:
+    plot_loss_curve = None
+# -----------------------------
+# Reproducibility (optional)
+# -----------------------------
+def set_seed(seed=42):
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+set_seed(42)
+# -----------------------------
+# Paths (edit if needed)
+# -----------------------------
+train_low_dir  = "/content/cvccolondbsplit/train/low"
+train_high_dir = "/content/cvccolondbsplit/train/high"
+val_low_dir    = "/content/cvccolondbsplit/val/low"
+val_high_dir   = "/content/cvccolondbsplit/val/high"
+save_dir       = "/content/saved_model"
+os.makedirs(save_dir, exist_ok=True)
 # -----------------------------
 # Hyperparameters
 # -----------------------------
 learning_rate = 1e-4
-weight_decay = 1e-5
-num_epochs = 100
-batch_size = 8
+weight_decay  = 1e-5
+num_epochs    = 100
+batch_size    = 8
 early_stopping_patience = 10
+grad_clip_norm = 1.0  # set None to disable
 # -----------------------------
 # Dataset
 # -----------------------------
-class cvccolondbsplitDataset(Dataset):
-    def __init__(self, enhanced_dir, high_dir, transform=None):
-        self.enhanced_dir = enhanced_dir
+class cvccolondbsplit(Dataset):
+    """
+    Expects identical filenames in low/ and high/ folders.
+    """
+    def __init__(self, low_dir, high_dir, transform=None):
+        self.low_dir = low_dir
         self.high_dir = high_dir
         self.transform = transform
-        self.image_names = sorted(os.listdir(enhanced_dir))
+        self.names = sorted([n for n in os.listdir(low_dir)
+                             if n.lower().endswith((".png", ".jpg", ".jpeg"))])
     def __len__(self):
-        return len(self.image_names)
+        return len(self.names)
     def __getitem__(self, idx):
-        enhanced_path = os.path.join(self.enhanced_dir, self.image_names[idx])
-        high_path = os.path.join(self.high_dir, self.image_names[idx])
-        enhanced_img = Image.open(enhanced_path).convert("RGB")
-        high_img = Image.open(high_path).convert("RGB")
+        name = self.names[idx]
+        low_img  = Image.open(os.path.join(self.low_dir,  name)).convert("RGB")
+        high_img = Image.open(os.path.join(self.high_dir, name)).convert("RGB")
         if self.transform:
-            enhanced_img = self.transform(enhanced_img)
+            low_img  = self.transform(low_img)
             high_img = self.transform(high_img)
-        return enhanced_img, high_img
+        return low_img, high_img, name
 # -----------------------------
 # Losses
 # -----------------------------
@@ -50,146 +77,146 @@ class SobelEdgeLoss(nn.Module):
         sobel_y = torch.tensor([[[-1., -2., -1.],
                                  [ 0.,  0.,  0.],
                                  [ 1.,  2.,  1.]]], dtype=torch.float32)
-        self.sobel_x = sobel_x.unsqueeze(0)
-        self.sobel_y = sobel_y.unsqueeze(0)
-
+        self.register_buffer("sobel_x", sobel_x.unsqueeze(0))  # [1,1,3,3]
+        self.register_buffer("sobel_y", sobel_y.unsqueeze(0))
     def forward(self, pred, target):
-        pred_gray = torch.mean(pred, dim=1, keepdim=True)
-        target_gray = torch.mean(target, dim=1, keepdim=True)
-        device = pred.device
-        sobel_x, sobel_y = self.sobel_x.to(device), self.sobel_y.to(device)
-        pred_gx = F.conv2d(pred_gray, sobel_x, padding=1)
-        pred_gy = F.conv2d(pred_gray, sobel_y, padding=1)
-        target_gx = F.conv2d(target_gray, sobel_x, padding=1)
-        target_gy = F.conv2d(target_gray, sobel_y, padding=1)
-        pred_grad = torch.sqrt(pred_gx**2 + pred_gy**2 + 1e-6)
+        pred_gray   = pred.mean(dim=1, keepdim=True)
+        target_gray = target.mean(dim=1, keepdim=True)
+        pred_gx   = F.conv2d(pred_gray,   self.sobel_x, padding=1)
+        pred_gy   = F.conv2d(pred_gray,   self.sobel_y, padding=1)
+        target_gx = F.conv2d(target_gray, self.sobel_x, padding=1)
+        target_gy = F.conv2d(target_gray, self.sobel_y, padding=1)
+        pred_grad   = torch.sqrt(pred_gx**2 + pred_gy**2 + 1e-6)
         target_grad = torch.sqrt(target_gx**2 + target_gy**2 + 1e-6)
-       return F.l1_loss(pred_grad, target_grad)
+        return F.l1_loss(pred_grad, target_grad)
 def gaussian(window_size, sigma):
-    gauss = torch.Tensor([exp(-(x - window_size//2)**2 / float(2*sigma**2)) for x in range(window_size)])
-    return gauss / gauss.sum()
+    g = torch.tensor([exp(-(x - window_size//2)**2 / float(2*sigma**2))
+                      for x in range(window_size)], dtype=torch.float32)
+    return g / g.sum()
 def create_window(window_size, channel):
-    _1D_window = gaussian(window_size, 1.5).unsqueeze(1)
-    _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
-    return _2D_window.expand(channel, 1, window_size, window_size).contiguous()
+    _1D = gaussian(window_size, 1.5).unsqueeze(1)                  # [w,1]
+    _2D = (_1D @ _1D.t()).float().unsqueeze(0).unsqueeze(0)        # [1,1,w,w]
+    return _2D.expand(channel, 1, window_size, window_size).contiguous()
 class SSIMLoss(nn.Module):
-    def __init__(self, window_size=11, size_average=True):
+    def __init__(self, window_size=11):
         super().__init__()
         self.window_size = window_size
-        self.size_average = size_average
         self.channel = 1
-        self.window = create_window(window_size, self.channel)
+        self.register_buffer("window", create_window(window_size, self.channel))
     def forward(self, img1, img2):
-        (_, channel, _, _) = img1.size()
-        if channel == self.channel and self.window.data.type() == img1.data.type():
-            window = self.window
-        else:
-            window = create_window(self.window_size, channel).to(img1.device)
-            self.window, self.channel = window, channel
-        mu1 = F.conv2d(img1, window, padding=self.window_size//2, groups=channel)
-        mu2 = F.conv2d(img2, window, padding=self.window_size//2, groups=channel)
-        mu1_sq, mu2_sq, mu1_mu2 = mu1.pow(2), mu2.pow(2), mu1*mu2
-        sigma1_sq = F.conv2d(img1*img1, window, padding=self.window_size//2, groups=channel) - mu1_sq
-        sigma2_sq = F.conv2d(img2*img2, window, padding=self.window_size//2, groups=channel) - mu2_sq
-        sigma12   = F.conv2d(img1*img2, window, padding=self.window_size//2, groups=channel) - mu1_mu2
+        (_, ch, _, _) = img1.size()
+        if ch != self.channel or self.window.size(0) != ch:
+            self.window = create_window(self.window_size, ch).to(img1.device)
+            self.channel = ch
+        mu1 = F.conv2d(img1, self.window, padding=self.window_size//2, groups=ch)
+        mu2 = F.conv2d(img2, self.window, padding=self.window_size//2, groups=ch)
+        mu1_sq, mu2_sq, mu1_mu2 = mu1**2, mu2**2, mu1*mu2
+        sigma1_sq = F.conv2d(img1*img1, self.window, padding=self.window_size//2, groups=ch) - mu1_sq
+        sigma2_sq = F.conv2d(img2*img2, self.window, padding=self.window_size//2, groups=ch) - mu2_sq
+        sigma12   = F.conv2d(img1*img2, self.window, padding=self.window_size//2, groups=ch) - mu1_mu2
         C1, C2 = 0.01**2, 0.03**2
-        ssim_map = ((2*mu1_mu2+C1)*(2*sigma12+C2))/((mu1_sq+mu2_sq+C1)*(sigma1_sq+sigma2_sq+C2))
+        ssim_map = ((2*mu1_mu2 + C1) * (2*sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
         return 1 - ssim_map.mean()
 class RangeLoss(nn.Module):
     def __init__(self, target_brightness=100/255., target_contrast=35/255.):
         super().__init__()
         self.tb, self.tc = target_brightness, target_contrast
     def forward(self, img):
-        gray = torch.mean(img, dim=1, keepdim=True)
-        brightness, contrast = torch.mean(gray), torch.std(gray)
-        return (brightness-self.tb)**2 + (contrast-self.tc)**2
-# -----------------------------
-# Combine Losses
-# -----------------------------
-mse_loss_fn   = nn.MSELoss()
-edge_loss_fn  = SobelEdgeLoss()
-ssim_loss_fn  = SSIMLoss()
+        gray = img.mean(dim=1, keepdim=True)
+        brightness = gray.mean()
+        contrast   = gray.std()
+        return (brightness - self.tb)**2 + (contrast - self.tc)**2
+mse_loss_fn  = nn.MSELoss()
+edge_loss_fn = SobelEdgeLoss()
+ssim_loss_fn = SSIMLoss()
 range_loss_fn = RangeLoss()
 def total_loss_fn(pred, target, w_mse, w_lpips, w_edge, w_ssim, w_range, lpips_model):
-    mse   = mse_loss_fn(pred, target)
-    edge  = edge_loss_fn(pred, target)
-    lp    = lpips_model(2*pred-1, 2*target-1).mean()
-    ssim  = ssim_loss_fn(pred, target)
-    rng   = range_loss_fn(pred)
+    # LPIPS expects [-1,1]
+    lp = lpips_model(2*pred - 1, 2*target - 1).mean()
+    mse  = mse_loss_fn(pred, target)
+    edge = edge_loss_fn(pred, target)
+    ssim = ssim_loss_fn(pred, target)
+    rng  = range_loss_fn(pred)
     total = w_mse*mse + w_lpips*lp + w_edge*edge + w_ssim*ssim + w_range*rng
-    return total
+    return total, {"mse": mse.item(), "lpips": lp.item(), "edge": edge.item(),
+                   "ssim": ssim.item(), "range": rng.item()}
 # -----------------------------
-# Device and LPIPS
+# Device, LPIPS, Transforms, Loaders
 # -----------------------------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 lpips_loss_fn = lpips.LPIPS(net='vgg').to(device)
-# -----------------------------
-# Data Paths
-# -----------------------------
-train_enhanced_dir = "/content/outputs/train_enhanced"
-train_high_dir     = "/content/cvccolondbsplit/train/high"
-val_enhanced_dir   = "/content/outputs/val_enhanced"
-val_high_dir       = "/content/cvccolondbsplit/val/high"
 transform = transforms.Compose([
-    transforms.Resize((224, 224)),
+    transforms.Resize((224, 224)),     # match your training resolution
     transforms.ColorJitter(brightness=0.2, contrast=0.2),
-    transforms.ToTensor()
+    transforms.ToTensor(),             # [0,1]
 ])
-train_dataset = cvccolondbsplitDataset(train_enhanced_dir, train_high_dir, transform)
-val_dataset   = cvccolondbsplitDataset(val_enhanced_dir, val_high_dir, transform)
-train_loader  = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-val_loader    = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+train_set = PairedImageFolder(train_low_dir, train_high_dir, transform)
+val_set   = PairedImageFolder(val_low_dir,   val_high_dir,   transform)
+train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,  num_workers=2, pin_memory=True)
+val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
 # -----------------------------
-# Model, Optimizer, Loss Weights
+# Model & Optimizer
 # -----------------------------
 model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+# loss weights
 w_mse, w_lpips, w_edge, w_ssim, w_range = 0.40, 0.10, 0.15, 0.35, 0.10
 # -----------------------------
 # Training Loop
 # -----------------------------
 best_val_loss = float("inf")
-patience_counter = 0
+patience = 0
 train_losses, val_losses = [], []
-
-for epoch in range(num_epochs):
-    # Training
+scaler = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
+for epoch in range(1, num_epochs + 1):
+    # ---- TRAIN ----
     model.train()
-    running_loss = 0.0
-    for input_img, target_img in train_loader:
-        input_img, target_img = input_img.to(device), target_img.to(device)
-        optimizer.zero_grad()
-        total_loss = total_loss_fn(input_img, target_img, w_mse, w_lpips, w_edge, w_ssim, w_range, lpips_loss_fn)
-        total_loss.backward()
-        optimizer.step()
-        running_loss += total_loss.item()
-    avg_train_loss = running_loss / len(train_loader)
-    train_losses.append(avg_train_loss)
-    # Validation
+    running = 0.0
+    for low, high, _ in train_loader:
+        low, high = low.to(device), high.to(device)
+        optimizer.zero_grad(set_to_none=True)
+        with torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
+            pred = model(low)                                # <<<<<<<<<<<<<< forward pass
+            loss, _ = total_loss_fn(pred, high, w_mse, w_lpips, w_edge, w_ssim, w_range, lpips_loss_fn)
+        scaler.scale(loss).backward()
+        if grad_clip_norm is not None:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
+        scaler.step(optimizer)
+        scaler.update()
+        running += loss.item()
+    avg_train = running / max(len(train_loader), 1)
+    train_losses.append(avg_train)
+    # ---- VALIDATE ----
     model.eval()
-    val_running_loss = 0.0
-    with torch.no_grad():
-        for input_img, target_img in val_loader:
-            input_img, target_img = input_img.to(device), target_img.to(device)
-            total_loss = total_loss_fn(input_img, target_img, w_mse, w_lpips, w_edge, w_ssim, w_range, lpips_loss_fn)
-            val_running_loss += total_loss.item()
-    avg_val_loss = val_running_loss / len(val_loader)
-    val_losses.append(avg_val_loss)
-    print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
-    # Save best model
-    if avg_val_loss < best_val_loss:
-        best_val_loss = avg_val_loss
-        patience_counter = 0
-        # ✅ Save both formats
-        torch.save(model, "cdandenseunet.pt")
-        torch.save(model.state_dict(), "cdandenseunet_weights.pth")
-        print("✔️ Saved best model as cdandenseunet.pt and cdandenseunet_weights.pth")
+    val_running = 0.0
+    with torch.no_grad(), torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
+        for low, high, _ in val_loader:
+            low, high = low.to(device), high.to(device)
+            pred = model(low)
+            vloss, _ = total_loss_fn(pred, high, w_mse, w_lpips, w_edge, w_ssim, w_range, lpips_loss_fn)
+            val_running += vloss.item()
+
+    avg_val = val_running / max(len(val_loader), 1)
+    val_losses.append(avg_val)
+    print(f"Epoch {epoch:03d} | Train {avg_train:.4f} | Val {avg_val:.4f}")
+    # ---- SAVE BEST ----
+    if avg_val < best_val_loss:
+        best_val_loss = avg_val
+        patience = 0
+        # save full model and weights
+        torch.save(model, os.path.join(save_dir, "cdandenseunet.pt"))
+        torch.save(model.state_dict(), os.path.join(save_dir, "cdan_denseunet_weights.pth"))
+        print("  ✔ Saved: cdandenseunet.pt and cdan_denseunet_weights.pth")
     else:
-        patience_counter += 1
-        if patience_counter >= early_stopping_patience:
-            print(f"⏹️ Early stopping at epoch {epoch+1}")
+        patience += 1
+        if patience >= early_stopping_patience:
+            print(f"⏹ Early stopping at epoch {epoch}")
             break
-# -----------------------------
-# Plot Loss Curve
-# -----------------------------
-plot_loss_curve(train_losses, val_losses)
+# optional loss plot
+if plot_loss_curve is not None:
+    try:
+        plot_loss_curve(train_losses, val_losses)
+    except Exception:
+        pass
+print("Training complete. Best model saved in:", save_dir)
