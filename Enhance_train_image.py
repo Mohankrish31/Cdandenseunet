@@ -16,7 +16,7 @@ model_path = "/content/models/cdan_denseunet.pt"
 # -------- Create output directory --------
 os.makedirs(output_dir, exist_ok=True)
 # -------- Load Model --------
-model = cdan_denseunet(in_channels=3, base_channels=32).to(device)
+model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
 model.load_state_dict(torch.load(model_path, map_location=device))
 model.eval()
 # -------- Transform --------
