@@ -1,9 +1,9 @@
 import os
+import sys
 import torch
 import numpy as np
 from PIL import Image
 from torchvision import transforms
-import sys
 # -------- Add model path --------
 sys.path.append('/content/CbamDenseUnet')
 from models.cdan_denseunet import CDANDenseUNet
@@ -12,16 +12,17 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # -------- Paths --------
 input_dir = "/content/cvccolondbsplit/val/low"      # Low-light test images
 output_dir = "/content/outputs/val_enhanced"       # Folder to save enhanced images
-model_path = "/content/saved_model/cdan_denseunet.pt"
+model_path = "/content/saved_model/cdan_denseunet.pt"   # full saved model (.pt)
 # -------- Create output directory --------
 os.makedirs(output_dir, exist_ok=True)
-# -------- Load Model --------
-model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
-model.load_state_dict(torch.load(model_path, map_location=device))
-model.eval()
+# -------- Load Full Model --------
+print("🔹 Loading full model...")
+model = torch.load(model_path, map_location=device)
+model = model.to(device).eval()
+print("✅ Loaded full model successfully!")
 # -------- Transform --------
 to_tensor = transforms.Compose([
-    transforms.Resize((224, 224)),
+    transforms.Resize((224, 224)),   # 👈 change/remove this if you want original resolution
     transforms.ToTensor()
 ])
 to_pil = transforms.ToPILImage()
@@ -31,11 +32,18 @@ with torch.no_grad():
         if fname.lower().endswith(('.jpg', '.jpeg', '.png')):
             img_path = os.path.join(input_dir, fname)
             img = Image.open(img_path).convert('RGB')
-            # Model Inference
+            # Preprocess
             inp = to_tensor(img).unsqueeze(0).to(device)
-            out = model(inp).squeeze().cpu().clamp(0, 1)
-            # Convert to PIL Image
+            # Model forward
+            out = model(inp).squeeze().cpu()
+            # Rescale if model outputs [-1,1]
+            if out.min() < 0:
+                out = (out + 1) / 2.0
+            out = out.clamp(0, 1)
+            # Convert to PIL
             out_img = to_pil(out)
-            out_img.save(os.path.join(output_dir, fname))
-            print(f"✅ Enhanced & saved: {fname}")
+            # Save
+            save_path = os.path.join(output_dir, f"enhanced_{fname}")
+            out_img.save(save_path)
+            print(f"✅ Enhanced & saved: {save_path}")
 print("🎉 All valid images processed and saved to:", output_dir)
