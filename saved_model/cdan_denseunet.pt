@@ -138,89 +138,93 @@ def total_loss_fn(pred, target, w_mse, w_lpips, w_edge, w_ssim, lpips_model):
                    "ssim": ssim.item()}
 
 # -----------------------------
-# Device, LPIPS, Transforms, Loaders
+# Main training block
 # -----------------------------
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-lpips_loss_fn = lpips.LPIPS(net='vgg').to(device)
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2),
-    transforms.ToTensor(),
-])
-train_set = PairedImageFolder(train_low_dir, train_high_dir, transform)
-val_set   = PairedImageFolder(val_low_dir,   val_high_dir,   transform)
-train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,  num_workers=2, pin_memory=True)
-val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
+if __name__ == "__main__":
+    # Device, LPIPS, Transforms, Loaders
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    lpips_loss_fn = lpips.LPIPS(net='vgg').to(device)
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2),
+        transforms.ToTensor(),
+    ])
+    train_set = cvccoloncbsplit(train_low_dir, train_high_dir, transform)
+    val_set   = cvccoloncbsplit(val_low_dir,   val_high_dir,   transform)
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,  num_workers=2, pin_memory=True)
+    val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
 
-# -----------------------------
-# Model & Optimizer
-# -----------------------------
-model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-
-# loss weights (adjusting to re-balance after removing RangeLoss)
-w_mse, w_lpips, w_edge, w_ssim = 0.25, 0.25, 0.25, 0.25
-
-# -----------------------------
-# Training Loop
-# -----------------------------
-best_val_loss = float("inf")
-patience = 0
-train_losses, val_losses = [], []
-scaler = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
-
-for epoch in range(1, num_epochs + 1):
-    # ---- TRAIN ----
-    model.train()
-    running = 0.0
-    for idx, (low, high, _) in enumerate(train_loader):
-        low, high = low.to(device), high.to(device)
-        optimizer.zero_grad(set_to_none=True)
-        with torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
-            pred = model(low)
-            
-            # Diagnostic print for training loop
-            print(f"Batch {idx+1} (Train) | Pred Min: {pred.min().item():.4f}, Max: {pred.max().item():.4f}")
-            
-            loss, _ = total_loss_fn(pred, high, w_mse, w_lpips, w_edge, w_ssim, lpips_loss_fn)
-        scaler.scale(loss).backward()
-        if grad_clip_norm is not None:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
-        scaler.step(optimizer)
-        scaler.update()
-        running += loss.item()
-    avg_train = running / max(len(train_loader), 1)
-    train_losses.append(avg_train)
-
-    # ---- VALIDATE ----
-    model.eval()
-    val_running = 0.0
-    with torch.no_grad(), torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
-        for idx, (low, high, _) in enumerate(val_loader):
-            low, high = low.to(device), high.to(device)
-            pred = model(low)
-            
-            # Diagnostic print for validation loop
-            print(f"Val Batch {idx+1} (Val) | Pred Min: {pred.min().item():.4f}, Max: {pred.max().item():.4f}")
-            
-            vloss, _ = total_loss_fn(pred, high, w_mse, w_lpips, w_edge, w_ssim, lpips_loss_fn)
-            val_running += vloss.item()
-    avg_val = val_running / max(len(val_loader), 1)
-    val_losses.append(avg_val)
-    print(f"Epoch {epoch:03d} | Train {avg_train:.4f} | Val {avg_val:.4f}")
+    # Model & Optimizer
+    model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
     
-    # ---- SAVE BEST ----
-    if avg_val < best_val_loss:
-        best_val_loss = avg_val
-        patience = 0
-        torch.save(model, os.path.join(save_dir, "cdandenseunet.pt"))
-        torch.save(model.state_dict(), os.path.join(save_dir, "cdan_denseunet_weights.pth"))
-        print("  ✔ Saved: cdandenseunet.pt and cdan_denseunet_weights.pth")
-    else:
-        patience += 1
-        if patience >= early_stopping_patience:
-            print(f"⏹ Early stopping at epoch {epoch}")
-            break
+    # Loss weights (adjusting to re-balance after removing RangeLoss)
+    w_mse, w_lpips, w_edge, w_ssim = 0.25, 0.25, 0.25, 0.25
+    
+    # Training
+    best_val_loss = float("inf")
+    patience = 0
+    train_losses, val_losses = [], []
+    scaler = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
 
-print("Training complete. Best model saved in:", save_dir)
+    for epoch in range(1, num_epochs + 1):
+        # ---- TRAIN ----
+        model.train()
+        running = 0.0
+        for idx, (low, high, _) in enumerate(train_loader):
+            low, high = low.to(device), high.to(device)
+            optimizer.zero_grad(set_to_none=True)
+            with torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
+                pred = model(low)
+                
+                # Diagnostic print for training loop
+                print(f"Batch {idx+1} (Train) | Pred Min: {pred.min().item():.4f}, Max: {pred.max().item():.4f}")
+                print(f"Pred Channel R: Min={pred[0, 0, :, :].min().item():.4f}, Max={pred[0, 0, :, :].max().item():.4f}")
+                print(f"Pred Channel G: Min={pred[0, 1, :, :].min().item():.4f}, Max={pred[0, 1, :, :].max().item():.4f}")
+                print(f"Pred Channel B: Min={pred[0, 2, :, :].min().item():.4f}, Max={pred[0, 2, :, :].max().item():.4f}")
+                
+                loss, _ = total_loss_fn(pred, high, w_mse, w_lpips, w_edge, w_ssim, lpips_loss_fn)
+            scaler.scale(loss).backward()
+            if grad_clip_norm is not None:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip_norm)
+            scaler.step(optimizer)
+            scaler.update()
+            running += loss.item()
+        avg_train = running / max(len(train_loader), 1)
+        train_losses.append(avg_train)
+
+        # ---- VALIDATE ----
+        model.eval()
+        val_running = 0.0
+        with torch.no_grad(), torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
+            for idx, (low, high, _) in enumerate(val_loader):
+                low, high = low.to(device), high.to(device)
+                pred = model(low)
+                
+                # Diagnostic print for validation loop
+                print(f"Val Batch {idx+1} (Val) | Pred Min: {pred.min().item():.4f}, Max: {pred.max().item():.4f}")
+                print(f"Pred Channel R: Min={pred[0, 0, :, :].min().item():.4f}, Max={pred[0, 0, :, :].max().item():.4f}")
+                print(f"Pred Channel G: Min={pred[0, 1, :, :].min().item():.4f}, Max={pred[0, 1, :, :].max().item():.4f}")
+                print(f"Pred Channel B: Min={pred[0, 2, :, :].min().item():.4f}, Max={pred[0, 2, :, :].max().item():.4f}")
+                
+                vloss, _ = total_loss_fn(pred, high, w_mse, w_lpips, w_edge, w_ssim, lpips_loss_fn)
+                val_running += vloss.item()
+        avg_val = val_running / max(len(val_loader), 1)
+        val_losses.append(avg_val)
+        print(f"Epoch {epoch:03d} | Train {avg_train:.4f} | Val {avg_val:.4f}")
+        
+        # ---- SAVE BEST ----
+        if avg_val < best_val_loss:
+            best_val_loss = avg_val
+            patience = 0
+            torch.save(model, os.path.join(save_dir, "cdandenseunet.pt"))
+            torch.save(model.state_dict(), os.path.join(save_dir, "cdan_denseunet_weights.pth"))
+            print("  ✔ Saved: cdandenseunet.pt and cdan_denseunet_weights.pth")
+        else:
+            patience += 1
+            if patience >= early_stopping_patience:
+                print(f"⏹ Early stopping at epoch {epoch}")
+                break
+
+    print("Training complete. Best model saved in:", save_dir)
