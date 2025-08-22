@@ -50,7 +50,7 @@ class CBAM(nn.Module):
 class _DenseLayer(nn.Module):
     def __init__(self, in_channels, growth_rate, drop_rate=0.0):
         super().__init__()
-        self.norm = nn.BatchNorm2d(in_channels)  # matches current channels dynamically
+        self.norm = nn.BatchNorm2d(in_channels)
         self.relu = nn.ReLU(inplace=True)
         self.conv = nn.Conv2d(in_channels, growth_rate, kernel_size=3, stride=1, padding=1, bias=False)
         self.drop_rate = drop_rate
@@ -59,7 +59,7 @@ class _DenseLayer(nn.Module):
         out = self.conv(self.relu(self.norm(x)))
         if self.drop_rate > 0:
             out = F.dropout(out, p=self.drop_rate, training=self.training)
-        return torch.cat([x, out], dim=1)  # channel grows by growth_rate
+        return torch.cat([x, out], dim=1)
 
 class _DenseBlock(nn.Module):
     def __init__(self, num_layers, in_channels, growth_rate, drop_rate=0.0):
@@ -70,7 +70,7 @@ class _DenseBlock(nn.Module):
             layers.append(_DenseLayer(channels, growth_rate, drop_rate))
             channels += growth_rate
         self.block = nn.Sequential(*layers)
-        self.out_channels = channels  # in + num_layers*growth_rate
+        self.out_channels = channels
 
     def forward(self, x):
         return self.block(x)
@@ -105,19 +105,14 @@ class EncoderBlock(nn.Module):
         return x, skip
 
 class DecoderBlock(nn.Module):
-    """
-    Upsample to skip channels, concat, dense-block (grows), then 1x1 compress back to out_channels (= skip_channels).
-    """
     def __init__(self, in_channels, skip_channels, num_layers=2, use_cbam=False):
         super().__init__()
         self.up = nn.ConvTranspose2d(in_channels, skip_channels, kernel_size=2, stride=2)
 
-        # After up: channels = skip_channels; after concat: 2*skip_channels
         self.db = _DenseBlock(num_layers=num_layers,
                               in_channels=2 * skip_channels,
-                              growth_rate=skip_channels // 2)  # adds skip_channels
+                              growth_rate=skip_channels // 2)
 
-        # Now channels = 2*skip + skip = 3*skip. Compress back to skip.
         self.compress = nn.Conv2d(2 * skip_channels + num_layers * (skip_channels // 2),
                                   skip_channels, kernel_size=1, bias=False)
 
@@ -125,17 +120,15 @@ class DecoderBlock(nn.Module):
 
     @property
     def out_channels(self):
-        # After compression, channels equal skip_channels
         return self.compress.out_channels if hasattr(self.compress, 'out_channels') else None
 
     def forward(self, x, skip):
         x = self.up(x)
-        # spatial size should match skip; if off by 1 due to odd sizes, center-crop skip
         if x.shape[-1] != skip.shape[-1] or x.shape[-2] != skip.shape[-2]:
             dh = skip.shape[-2] - x.shape[-2]
             dw = skip.shape[-1] - x.shape[-1]
             skip = skip[:, :, dh // 2: skip.shape[-2] - (dh - dh // 2),
-                             dw // 2: skip.shape[-1] - (dw - dw // 2)]
+                              dw // 2: skip.shape[-1] - (dw - dw // 2)]
         x = torch.cat([x, skip], dim=1)
         x = self.db(x)
         x = self.compress(x)
@@ -145,22 +138,13 @@ class DecoderBlock(nn.Module):
 
 # ================= CDAN-DenseUNet (Light) =================
 class CDANDenseUNet(nn.Module):
-    """
-    Light version:
-      - 3 encoders + 3 decoders
-      - base_channels = 32, growth_rate = 12 by default
-      - CBAM only in: last encoder, bottleneck, last decoder
-    """
     def __init__(self, in_channels=3, out_channels=3, base_channels=24, growth_rate=12):
         super().__init__()
         self.init_conv = nn.Conv2d(in_channels, base_channels, kernel_size=3, stride=1, padding=1, bias=False)
 
         # ---- Encoders ----
-        # enc1 in: b -> out: b + 2g
         self.enc1 = EncoderBlock(in_channels=base_channels, growth_rate=growth_rate, num_layers=2, use_cbam=False)
-        # enc2 in: b+2g -> out: b+4g
         self.enc2 = EncoderBlock(in_channels=self.enc1.out_channels, growth_rate=growth_rate, num_layers=2, use_cbam=False)
-        # enc3 in: b+4g -> out: b+6g  (CBAM here)
         self.enc3 = EncoderBlock(in_channels=self.enc2.out_channels, growth_rate=growth_rate, num_layers=2, use_cbam=True)
 
         # ---- Bottleneck ----
@@ -168,39 +152,43 @@ class CDANDenseUNet(nn.Module):
         self.cbam_bottleneck = CBAM(self.bottleneck.out_channels)
 
         # ---- Decoders ----
-        # dec3: in <- bottleneck, skip <- enc3
         self.dec3 = DecoderBlock(in_channels=self.bottleneck.out_channels,
                                  skip_channels=self.enc3.out_channels,
                                  num_layers=2, use_cbam=False)
 
-        # dec2: in <- dec3(out = enc3.out_channels), skip <- enc2
         self.dec2 = DecoderBlock(in_channels=self.enc3.out_channels,
                                  skip_channels=self.enc2.out_channels,
                                  num_layers=2, use_cbam=False)
 
-        # dec1: in <- dec2(out = enc2.out_channels), skip <- enc1 (CBAM here)
         self.dec1 = DecoderBlock(in_channels=self.enc2.out_channels,
                                  skip_channels=self.enc1.out_channels,
                                  num_layers=2, use_cbam=True)
 
         # Final 1x1: channels = enc1.out_channels -> out_channels
         self.final = nn.Conv2d(self.enc1.out_channels, out_channels, kernel_size=1)
+        
+        # ADDED: Final activation function
+        self.final_activation = nn.Sigmoid()
 
     def forward(self, x):
         x = self.init_conv(x)
 
-        x, s1 = self.enc1(x)   # s1: [B, b+2g, H/1, W/1]
-        x, s2 = self.enc2(x)   # s2: [B, b+4g, H/2, W/2]
-        x, s3 = self.enc3(x)   # s3: [B, b+6g, H/4, W/4]
+        x, s1 = self.enc1(x)
+        x, s2 = self.enc2(x)
+        x, s3 = self.enc3(x)
 
-        x = self.bottleneck(x)           # [B, b+8g, H/8, W/8]
+        x = self.bottleneck(x)
         x = self.cbam_bottleneck(x)
 
-        x = self.dec3(x, s3)             # -> [B, b+6g, H/4, W/4]
-        x = self.dec2(x, s2)             # -> [B, b+4g, H/2, W/2]
-        x = self.dec1(x, s1)             # -> [B, b+2g, H,   W  ]
+        x = self.dec3(x, s3)
+        x = self.dec2(x, s2)
+        x = self.dec1(x, s1)
 
-        out = self.final(x)              # -> [B, out_channels, H, W]
+        out = self.final(x)
+        
+        # ADDED: Pass the final output through the sigmoid
+        out = self.final_activation(out)
+        
         return out
 
 # ===================== Quick test =====================
@@ -209,3 +197,4 @@ if __name__ == "__main__":
     x = torch.randn(8, 3, 224, 224)
     y = model(x)
     print("Output shape:", y.shape)
+    print(f"Output range: Min={y.min().item():.4f}, Max={y.max().item():.4f}")
