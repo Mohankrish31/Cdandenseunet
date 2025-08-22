@@ -8,9 +8,14 @@ from torchvision import transforms
 from PIL import Image
 import lpips
 from math import exp
+import sys
 
-# ---- your model ----
-from models.cdan_denseunet import CDANDenseUNet
+# Assume the model definition is in the correct path
+try:
+    from models.cdan_denseunet import CDANDenseUNet
+except ImportError:
+    print("Error: Could not import CDANDenseUNet. Please ensure your 'models' directory and 'cdan_denseunet.py' file are in the correct location and accessible.")
+    sys.exit()
 
 # -----------------------------
 # Reproducibility (optional)
@@ -44,10 +49,7 @@ grad_clip_norm = 1.0  # set None to disable
 # -----------------------------
 # Dataset
 # -----------------------------
-class PairedImageFolder(Dataset):
-    """
-    Expects identical filenames in low/ and high/ folders.
-    """
+class cvccoloncbsplit(Dataset):
     def __init__(self, low_dir, high_dir, transform=None):
         self.low_dir = low_dir
         self.high_dir = high_dir
@@ -58,7 +60,7 @@ class PairedImageFolder(Dataset):
         return len(self.names)
     def __getitem__(self, idx):
         name = self.names[idx]
-        low_img  = Image.open(os.path.join(self.low_dir,  name)).convert("RGB")
+        low_img  = Image.open(os.path.join(self.low_dir, name)).convert("RGB")
         high_img = Image.open(os.path.join(self.high_dir, name)).convert("RGB")
         if self.transform:
             low_img  = self.transform(low_img)
@@ -121,8 +123,6 @@ class SSIMLoss(nn.Module):
         ssim_map = ((2*mu1_mu2 + C1) * (2*sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
         return 1 - ssim_map.mean()
 
-# REMOVED RangeLoss
-
 mse_loss_fn  = nn.MSELoss()
 edge_loss_fn = SobelEdgeLoss()
 ssim_loss_fn = SSIMLoss()
@@ -173,15 +173,15 @@ for epoch in range(1, num_epochs + 1):
     # ---- TRAIN ----
     model.train()
     running = 0.0
-    for low, high, _ in train_loader:
+    for idx, (low, high, _) in enumerate(train_loader):
         low, high = low.to(device), high.to(device)
         optimizer.zero_grad(set_to_none=True)
         with torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
             pred = model(low)
-            # 💡 Sanity check for output values
-            # This is key to diagnosing the black box issue
-            if pred.max().item() < 0.1:
-                print(f"Epoch {epoch} | Warning: Max output value is very low: {pred.max().item():.4f}")
+            
+            # Diagnostic print for training loop
+            print(f"Batch {idx+1} (Train) | Pred Min: {pred.min().item():.4f}, Max: {pred.max().item():.4f}")
+            
             loss, _ = total_loss_fn(pred, high, w_mse, w_lpips, w_edge, w_ssim, lpips_loss_fn)
         scaler.scale(loss).backward()
         if grad_clip_norm is not None:
@@ -197,19 +197,23 @@ for epoch in range(1, num_epochs + 1):
     model.eval()
     val_running = 0.0
     with torch.no_grad(), torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
-        for low, high, _ in val_loader:
+        for idx, (low, high, _) in enumerate(val_loader):
             low, high = low.to(device), high.to(device)
             pred = model(low)
+            
+            # Diagnostic print for validation loop
+            print(f"Val Batch {idx+1} (Val) | Pred Min: {pred.min().item():.4f}, Max: {pred.max().item():.4f}")
+            
             vloss, _ = total_loss_fn(pred, high, w_mse, w_lpips, w_edge, w_ssim, lpips_loss_fn)
             val_running += vloss.item()
     avg_val = val_running / max(len(val_loader), 1)
     val_losses.append(avg_val)
     print(f"Epoch {epoch:03d} | Train {avg_train:.4f} | Val {avg_val:.4f}")
+    
     # ---- SAVE BEST ----
     if avg_val < best_val_loss:
         best_val_loss = avg_val
         patience = 0
-        # save full model and weights
         torch.save(model, os.path.join(save_dir, "cdandenseunet.pt"))
         torch.save(model.state_dict(), os.path.join(save_dir, "cdan_denseunet_weights.pth"))
         print("  ✔ Saved: cdandenseunet.pt and cdan_denseunet_weights.pth")
