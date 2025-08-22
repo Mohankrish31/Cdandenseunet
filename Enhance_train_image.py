@@ -16,7 +16,7 @@ os.makedirs(output_dir, exist_ok=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # -------- Load model --------
 model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
-model.load_state_dict(torch.load("/content/saved_model/cdan_denseunet_weights.pth", map_location=device))
+model.load_state_dict(torch.load("/content/saved_model/cdan_denseunet.pt", map_location=device))
 model.eval()
 # -------- Preprocessing (no normalization) --------
 transform = transforms.Compose([
