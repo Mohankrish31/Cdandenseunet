@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchvision import transforms
+from PIL import Image
+import numpy as np
 
 # ====================== CBAM ======================
 class ChannelAttention(nn.Module):
@@ -46,7 +49,7 @@ class CBAM(nn.Module):
         x = self.sa(x)
         return x
 
-# ================= Dense blocks (fixed) =================
+# ================= Dense blocks =================
 class _DenseLayer(nn.Module):
     def __init__(self, in_channels, growth_rate, drop_rate=0.0):
         super().__init__()
@@ -54,11 +57,12 @@ class _DenseLayer(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.conv = nn.Conv2d(in_channels, growth_rate, kernel_size=3, stride=1, padding=1, bias=False)
         self.drop_rate = drop_rate
+        self.dropout = nn.Dropout2d(p=drop_rate) if drop_rate > 0 else None
 
     def forward(self, x):
         out = self.conv(self.relu(self.norm(x)))
-        if self.drop_rate > 0:
-            out = F.dropout(out, p=self.drop_rate, training=self.training)
+        if self.dropout:
+            out = self.dropout(out)
         return torch.cat([x, out], dim=1)
 
 class _DenseBlock(nn.Module):
@@ -84,7 +88,7 @@ class Bottleneck(nn.Module):
     def forward(self, x):
         return self.dense_block(x)
 
-# ============ Encoder & Decoder (with consistent shapes) ============
+# ============ Encoder & Decoder ============ 
 class EncoderBlock(nn.Module):
     def __init__(self, in_channels, growth_rate, num_layers=2, use_cbam=False):
         super().__init__()
@@ -113,14 +117,14 @@ class DecoderBlock(nn.Module):
                               in_channels=2 * skip_channels,
                               growth_rate=skip_channels // 2)
 
-        self.compress = nn.Conv2d(2 * skip_channels + num_layers * (skip_channels // 2),
-                                  skip_channels, kernel_size=1, bias=False)
-
+        out_channels = 2 * skip_channels + num_layers * (skip_channels // 2)
+        self.compress = nn.Conv2d(out_channels, skip_channels, kernel_size=1, bias=False)
         self.cbam = CBAM(skip_channels) if use_cbam else None
+        self._out_channels = skip_channels
 
     @property
     def out_channels(self):
-        return self.compress.out_channels if hasattr(self.compress, 'out_channels') else None
+        return self._out_channels
 
     def forward(self, x, skip):
         x = self.up(x)
@@ -136,65 +140,55 @@ class DecoderBlock(nn.Module):
             x = self.cbam(x)
         return x
 
-# ================= CDAN-DenseUNet (Light) =================
+# ================= CDAN-DenseUNet =================
 class CDANDenseUNet(nn.Module):
     def __init__(self, in_channels=3, out_channels=3, base_channels=24, growth_rate=12):
         super().__init__()
         self.init_conv = nn.Conv2d(in_channels, base_channels, kernel_size=3, stride=1, padding=1, bias=False)
 
         # ---- Encoders ----
-        self.enc1 = EncoderBlock(in_channels=base_channels, growth_rate=growth_rate, num_layers=2, use_cbam=False)
-        self.enc2 = EncoderBlock(in_channels=self.enc1.out_channels, growth_rate=growth_rate, num_layers=2, use_cbam=False)
-        self.enc3 = EncoderBlock(in_channels=self.enc2.out_channels, growth_rate=growth_rate, num_layers=2, use_cbam=True)
+        self.enc1 = EncoderBlock(base_channels, growth_rate, num_layers=2, use_cbam=False)
+        self.enc2 = EncoderBlock(self.enc1.out_channels, growth_rate, num_layers=2, use_cbam=False)
+        self.enc3 = EncoderBlock(self.enc2.out_channels, growth_rate, num_layers=2, use_cbam=True)
 
         # ---- Bottleneck ----
-        self.bottleneck = Bottleneck(in_channels=self.enc3.out_channels, num_layers=2, growth_rate=growth_rate)
+        self.bottleneck = Bottleneck(self.enc3.out_channels, num_layers=2, growth_rate=growth_rate)
         self.cbam_bottleneck = CBAM(self.bottleneck.out_channels)
 
         # ---- Decoders ----
-        self.dec3 = DecoderBlock(in_channels=self.bottleneck.out_channels,
-                                 skip_channels=self.enc3.out_channels,
-                                 num_layers=2, use_cbam=False)
+        self.dec3 = DecoderBlock(self.bottleneck.out_channels, self.enc3.out_channels, num_layers=2, use_cbam=False)
+        self.dec2 = DecoderBlock(self.enc3.out_channels, self.enc2.out_channels, num_layers=2, use_cbam=False)
+        self.dec1 = DecoderBlock(self.enc2.out_channels, self.enc1.out_channels, num_layers=2, use_cbam=True)
 
-        self.dec2 = DecoderBlock(in_channels=self.enc3.out_channels,
-                                 skip_channels=self.enc2.out_channels,
-                                 num_layers=2, use_cbam=False)
-
-        self.dec1 = DecoderBlock(in_channels=self.enc2.out_channels,
-                                 skip_channels=self.enc1.out_channels,
-                                 num_layers=2, use_cbam=True)
-
-        # Final 1x1: channels = enc1.out_channels -> out_channels
+        # ---- Final conv + sigmoid ----
         self.final = nn.Conv2d(self.enc1.out_channels, out_channels, kernel_size=1)
-        
-        # ADDED: Final activation function
         self.final_activation = nn.Sigmoid()
 
     def forward(self, x):
         x = self.init_conv(x)
-
         x, s1 = self.enc1(x)
         x, s2 = self.enc2(x)
         x, s3 = self.enc3(x)
-
         x = self.bottleneck(x)
         x = self.cbam_bottleneck(x)
-
         x = self.dec3(x, s3)
         x = self.dec2(x, s2)
         x = self.dec1(x, s1)
-
-        out = self.final(x)
-        
-        # ADDED: Pass the final output through the sigmoid
-        out = self.final_activation(out)
-        
+        out = self.final_activation(self.final(x))
         return out
 
-# ===================== Quick test =====================
+# ===================== Debug + Save =====================
+def save_tensor_image(tensor, filename):
+    """Save a model output tensor as an image"""
+    img = tensor.detach().cpu().permute(1,2,0).numpy()  # [H,W,C]
+    img = (img * 255).clip(0,255).astype(np.uint8)
+    Image.fromarray(img).save(filename)
+
 if __name__ == "__main__":
     model = CDANDenseUNet(in_channels=3, out_channels=3, base_channels=32, growth_rate=12)
-    x = torch.randn(8, 3, 224, 224)
+    x = torch.randn(1, 3, 224, 224)
     y = model(x)
     print("Output shape:", y.shape)
-    print(f"Output range: Min={y.min().item():.4f}, Max={y.max().item():.4f}")
+    print(f"Range → min={y.min().item():.4f}, max={y.max().item():.4f}, mean={y.mean().item():.4f}")
+    save_tensor_image(y[0], "test_output.png")
+    print("Saved: test_output.png")
