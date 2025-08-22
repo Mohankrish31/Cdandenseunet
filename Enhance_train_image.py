@@ -38,31 +38,26 @@ preprocess = transforms.Compose([
 # to convert the tensor to a PIL image.
 
 # -------- Enhance and save images --------
+# -------- Run inference --------
 with torch.no_grad():
     for fname in os.listdir(input_dir):
         if fname.lower().endswith(('.jpg', '.jpeg', '.png')):
             img_path = os.path.join(input_dir, fname)
-            try:
-                # Open and preprocess image
-                img = Image.open(img_path).convert("RGB")
-                inp = preprocess(img).unsqueeze(0).to(device)  # [1, 3, H, W]
+            img = Image.open(img_path).convert("RGB")
+            inp = preprocess(img).unsqueeze(0).to(device)
 
-                # Run inference
-                out = model(inp)  # [1, 3, H, W]
+            # Forward pass
+            out = model(inp)
 
-                # Clamp output to the valid [0, 1] range
-                out_clamped = out.squeeze(0).cpu().clamp(0, 1)
+            # If model outputs [-1, 1], rescale -> [0, 1]
+            out = (out + 1) / 2  
 
-                # Convert tensor to a PIL Image directly
-                # We multiply by 255 and cast to uint8 to save as an 8-bit image
-                out_img = transforms.ToPILImage()(out_clamped)
+            # Clamp and convert
+            out_clamped = out.squeeze(0).cpu().clamp(0, 1)
+            out_img = transforms.ToPILImage()(out_clamped)
 
-                # Save the enhanced image
-                save_path = os.path.join(output_dir, fname)
-                out_img.save(save_path)
-                print(f"✅ Enhanced & saved: {fname}")
+            save_path = os.path.join(output_dir, fname)
+            out_img.save(save_path)
+            print(f"✅ Enhanced & saved: {fname}")
 
-            except Exception as e:
-                print(f"❌ Failed to process {fname}: {e}")
 
-print("✨ All images processed.")
