@@ -39,7 +39,7 @@ os.makedirs(save_dir, exist_ok=True)
 # -----------------------------
 # Hyperparameters
 # -----------------------------
-learning_rate = 1e-4
+learning_rate = 5e-4
 weight_decay  = 1e-5
 num_epochs    = 100
 batch_size    = 8
@@ -159,7 +159,7 @@ model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
 # loss weights (adjusting to re-balance after removing RangeLoss)
-w_mse, w_lpips, w_edge, w_ssim = 0.45, 0.10, 0.20, 0.25
+w_mse, w_lpips, w_edge, w_ssim = 0.30, 0.10, 0.30, 0.30
 
 # -----------------------------
 # Training Loop
