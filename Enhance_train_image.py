@@ -32,14 +32,19 @@ with torch.no_grad():
             img = Image.open(img_path).convert("RGB")
             inp = transform(img).unsqueeze(0).to(device)  # [1,3,H,W]
             
-            out = model(inp).detach().cpu()  # [1,3,H,W]
-            out = out[0]  # [3,H,W]
-            
-            # Auto scale if needed
-            if out.min() < 0 or out.max() > 1:
-                out = (out - out.min()) / (out.max() - out.min() + 1e-8)
-            out = out.clamp(0,1)
-            
-            out_img = to_pil(out)
+            out = model(inp)  # [1,3,H,W]
+
+            # Remove batch dimension and ensure tensor is contiguous
+            out = out.squeeze(0).cpu().clamp(0,1)
+
+            # If needed, auto scale each channel
+            min_val = out.min()
+            max_val = out.max()
+            if min_val < 0 or max_val > 1:
+                out = (out - min_val) / (max_val - min_val + 1e-8)
+                out = out.clamp(0, 1)
+
+            # Convert to PIL image (make sure to use float32 in [0,1])
+            out_img = to_pil(out.float())
             out_img.save(os.path.join(output_dir, fname))
-            print(f"✅ Enhanced & saved: {fname} | range: {out.min():.3f}-{out.max():.3f}")
+            print(f"✅ Enhanced & saved: {fname} | range: {min_val:.3f}-{max_val:.3f}")
