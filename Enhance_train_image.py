@@ -5,7 +5,7 @@ from PIL import Image
 from torchvision import transforms
 import sys
 # -------- Add model path --------
-sys.path.append('/content/CbamDenseUnet')
+sys.path.append('/content/CdanDenseUNet')
 from models.cdan_denseunet import CDANDenseUNet
 # -------- Paths --------
 input_dir = "/content/cvccolondbsplit/train/low"
