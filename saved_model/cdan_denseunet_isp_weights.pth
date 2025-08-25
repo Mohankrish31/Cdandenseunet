@@ -5,7 +5,7 @@ from models.cdan_denseunet import CDANDenseUNet
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Initialize model
 model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
-model.load_state_dict(torch.load("cdandenseunet_weights.pth", map_location=device))
+model.load_state_dict(torch.load("cdan_denseunet_isp_weights.pth", map_location=device))
 model.eval()
 # Load and preprocess image
 img = Image.open("low_light.png").convert("RGB").resize((224, 224))
