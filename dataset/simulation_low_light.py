@@ -5,6 +5,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 import torchvision.transforms.functional as F
+
 class cvccolondbsplitDataset(Dataset):
     def __init__(self, low_root, high_root, transform=None, simulate=False):
         self.low_root = low_root
@@ -13,15 +14,25 @@ class cvccolondbsplitDataset(Dataset):
         self.simulate = simulate
         self.to_tensor = transforms.ToTensor()
         self.filenames = sorted(os.listdir(high_root))
+
     def simulate_low_light(self, image):
+        # Convert to numpy float [0,1]
         np_img = np.array(image).astype(np.float32) / 255.0
-        gamma = random.uniform(1.5, 2.5)
+
+        # 🔹 Gamma correction (slightly less aggressive)
+        gamma = random.uniform(1.2, 2.0)
         low_light_img = np.power(np_img, gamma)
-        poisson_scaled = low_light_img * random.uniform(20, 50)
-        poisson_noise = np.random.poisson(poisson_scaled) / random.uniform(20, 50)
+
+        # 🔹 Poisson noise (realistic)
+        poisson_scaled = low_light_img * random.uniform(5, 20)
+        poisson_noise = np.random.poisson(poisson_scaled) / random.uniform(5, 20)
         noisy_img = np.clip(low_light_img + poisson_noise, 0, 1)
-        mean, std = 0, random.uniform(0.01, 0.05)
+
+        # 🔹 Gaussian noise (lighter)
+        mean, std = 0, random.uniform(0.005, 0.02)
         noisy_img = np.clip(noisy_img + np.random.normal(mean, std, noisy_img.shape), 0, 1)
+
+        # 🔹 Color jitter for realistic low-light variation
         jitter = transforms.ColorJitter(
             brightness=random.uniform(0.1, 0.3),
             contrast=random.uniform(0.0, 0.1),
@@ -31,16 +42,20 @@ class cvccolondbsplitDataset(Dataset):
         pil_img = Image.fromarray((noisy_img * 255).astype(np.uint8))
         jittered_img = jitter(pil_img)
         return jittered_img
+
     def __len__(self):
         return len(self.filenames)
+
     def __getitem__(self, idx):
         high_img_path = os.path.join(self.high_root, self.filenames[idx])
         high = Image.open(high_img_path).convert('RGB')
+
         if self.simulate:
             low = self.simulate_low_light(high.copy())
         else:
             low_img_path = os.path.join(self.low_root, self.filenames[idx])
             low = Image.open(low_img_path).convert('RGB')
+
         # ✅ Apply SAME transform to both
         if self.transform:
             seed = np.random.randint(2147483647)  # ensure same randomness
@@ -51,4 +66,5 @@ class cvccolondbsplitDataset(Dataset):
         else:
             low = self.to_tensor(low)
             high = self.to_tensor(high)
+
         return low, high
