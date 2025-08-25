@@ -10,7 +10,7 @@ from models.cdan_denseunet import CDANDenseUNet
 # ------------------- Paths -------------------
 input_dir = "/content/cvccolondbsplit/train/low"       # Low-light images
 output_dir = "/content/outputs/train_enhanced"        # Enhanced images save path
-model_path = "/content/saved_model/cdan_denseunet_weights.pth"  # Trained weights
+model_path = "/content/saved_model/cdan_denseunet_isp_weights.pth"  # Trained weights
 os.makedirs(output_dir, exist_ok=True)
 # ------------------- Device -------------------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
