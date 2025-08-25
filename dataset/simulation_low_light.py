@@ -1,70 +1,95 @@
 import os
-import random
+import cv2
 import numpy as np
-from PIL import Image
-from torch.utils.data import Dataset
-from torchvision import transforms
-import torchvision.transforms.functional as F
-
-class cvccolondbsplitDataset(Dataset):
-    def __init__(self, low_root, high_root, transform=None, simulate=False):
-        self.low_root = low_root
-        self.high_root = high_root
-        self.transform = transform
-        self.simulate = simulate
-        self.to_tensor = transforms.ToTensor()
-        self.filenames = sorted(os.listdir(high_root))
-
-    def simulate_low_light(self, image):
-        # Convert to numpy float [0,1]
-        np_img = np.array(image).astype(np.float32) / 255.0
-
-        # 🔹 Gamma correction (slightly less aggressive)
-        gamma = random.uniform(1.2, 2.0)
-        low_light_img = np.power(np_img, gamma)
-
-        # 🔹 Poisson noise (realistic)
-        poisson_scaled = low_light_img * random.uniform(5, 20)
-        poisson_noise = np.random.poisson(poisson_scaled) / random.uniform(5, 20)
-        noisy_img = np.clip(low_light_img + poisson_noise, 0, 1)
-
-        # 🔹 Gaussian noise (lighter)
-        mean, std = 0, random.uniform(0.005, 0.02)
-        noisy_img = np.clip(noisy_img + np.random.normal(mean, std, noisy_img.shape), 0, 1)
-
-        # 🔹 Color jitter for realistic low-light variation
-        jitter = transforms.ColorJitter(
-            brightness=random.uniform(0.1, 0.3),
-            contrast=random.uniform(0.0, 0.1),
-            saturation=random.uniform(0.0, 0.1),
-            hue=random.uniform(-0.05, 0.05)
-        )
-        pil_img = Image.fromarray((noisy_img * 255).astype(np.uint8))
-        jittered_img = jitter(pil_img)
-        return jittered_img
-
-    def __len__(self):
-        return len(self.filenames)
-
-    def __getitem__(self, idx):
-        high_img_path = os.path.join(self.high_root, self.filenames[idx])
-        high = Image.open(high_img_path).convert('RGB')
-
-        if self.simulate:
-            low = self.simulate_low_light(high.copy())
-        else:
-            low_img_path = os.path.join(self.low_root, self.filenames[idx])
-            low = Image.open(low_img_path).convert('RGB')
-
-        # ✅ Apply SAME transform to both
-        if self.transform:
-            seed = np.random.randint(2147483647)  # ensure same randomness
-            random.seed(seed); torch.manual_seed(seed)
-            low = self.transform(low)
-            random.seed(seed); torch.manual_seed(seed)
-            high = self.transform(high)
-        else:
-            low = self.to_tensor(low)
-            high = self.to_tensor(high)
-
-        return low, high
+from tqdm import tqdm
+from sklearn.model_selection import train_test_split
+import random
+def srgb_to_linear(image):
+    """
+    Converts an sRGB image (0-255 uint8) to a linear image (0-1 float).
+    This is a critical first step to simulate a camera's sensor.
+    """
+    image = image.astype(np.float32) / 255.0
+    linear_image = np.where(image <= 0.04045, image / 12.92, ((image + 0.055) / 1.055) ** 2.4)
+    return linear_image
+def linear_to_srgb(image):
+    """
+    Converts a linear image (0-1 float) to an sRGB image (0-255 uint8).
+    This is the final step to prepare the image for display.
+    """
+    srgb_image = np.where(image <= 0.0031308, image * 12.92, 1.055 * (image ** (1/2.4)) - 0.055)
+    srgb_image = np.clip(srgb_image * 255.0, 0, 255).astype(np.uint8)
+    return srgb_image
+def simulate_low_light_isp(image, exposure_range=(0.02, 0.1),
+                          white_balance_range=(0.8, 1.2),
+                          poisson_gain_range=(0.02, 0.1),
+                          read_noise_std=(0.001, 0.005)):
+    """
+    Simulates low-light conditions by following a simplified ISP pipeline.
+    """
+    # 1. Convert to Linear Space (Inverse Gamma) ⏪
+    linear_img = srgb_to_linear(image)
+    # 2. Simulate Low Exposure ⏪
+    exposure = random.uniform(*exposure_range)
+    low_exposure_img = linear_img * exposure
+    # 3. Apply Combined Poisson-Gaussian Noise ⏪
+    # Poisson noise is signal-dependent, Gaussian noise is not.
+    poisson_gain = random.uniform(*poisson_gain_range)
+    poisson_noise = np.random.poisson(low_exposure_img / poisson_gain) * poisson_gain
+    read_noise_stdev = random.uniform(*read_noise_std)
+    gaussian_noise = np.random.normal(0, read_noise_stdev, linear_img.shape)
+    noisy_linear_img = np.clip(poisson_noise + gaussian_noise, 0, 1)
+    # 4. Apply White Balance ⏪
+    # Randomly scale color channels to simulate white balance variations
+    white_balance_r = random.uniform(*white_balance_range)
+    white_balance_g = random.uniform(*white_balance_range)
+    white_balance_b = random.uniform(*white_balance_range)
+    # Apply gains to noisy linear image
+    noisy_linear_img[:, :, 2] *= white_balance_b  # B
+    noisy_linear_img[:, :, 1] *= white_balance_g  # G
+    noisy_linear_img[:, :, 0] *= white_balance_r  # R
+    # 5. Convert to sRGB Space (Gamma Correction) ⏪
+    low_light_srgb = linear_to_srgb(noisy_linear_img)
+    return low_light_srgb
+def prepare_dataset(input_dir, output_dir, val_ratio=0.1, test_ratio=0.2, resize_size=(224, 224)):
+    # Read all images
+    image_list = [f for f in os.listdir(input_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+    image_list.sort()
+    if len(image_list) == 0:
+        print("No images found in", input_dir)
+        return
+    # Train/Val/Test split
+    trainval_imgs, test_imgs = train_test_split(image_list, test_size=test_ratio, random_state=42)
+    train_imgs, val_imgs = train_test_split(trainval_imgs, test_size=val_ratio / (1 - test_ratio), random_state=42)
+    splits = {'train': train_imgs, 'val': val_imgs, 'test': test_imgs}
+    # Process and save images
+    for split, filenames in splits.items():
+        print(f"\nProcessing {split.upper()} split with {len(filenames)} images...")
+        low_dir = os.path.join(output_dir, split, 'low')
+        high_dir = os.path.join(output_dir, split, 'high')
+        os.makedirs(low_dir, exist_ok=True)
+        os.makedirs(high_dir, exist_ok=True)
+        for fname in tqdm(filenames):
+            image_path = os.path.join(input_dir, fname)
+            image = cv2.imread(image_path)
+            if image is None:
+                print("Skipping unreadable image:", fname)
+                continue
+            # Resize
+            image = cv2.resize(image, resize_size)
+            # Generate low-light image with the new ISP-based function
+            low_light_img = simulate_low_light_isp(image)
+            # Save high and low images
+            cv2.imwrite(os.path.join(high_dir, fname), image)
+            cv2.imwrite(os.path.join(low_dir, fname), low_light_img)
+    print("\n✅ Dataset preparation complete.")
+if __name__ == "__main__":
+    original_dataset_path = "/content/cvccolondb/data/train/images"
+    output_dataset_path = "/content/cvccolondbsplit"
+    prepare_dataset(
+        input_dir=original_dataset_path,
+        output_dir=output_dataset_path,
+        val_ratio=0.1,
+        test_ratio=0.2,
+        resize_size=(224, 224)
+    )
