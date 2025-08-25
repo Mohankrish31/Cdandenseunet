@@ -1,45 +1,42 @@
-# Prepare environment
-pip install torch torchvision lpips numpy Pillow tqdm matplotlib opencv-python scikit-image
-# === Create Dataset Instances ===
-train_dataset = cvccolondbDataset(train_enhanced_dir, train_high_dir, transform=transform)
-val_dataset = cvccolondbDataset(val_enhanced_dir, val_high_dir, transform=transform)
-# === Create DataLoaders ===
-batch_size = 8
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-# Initialize model
-model = CDANDenseUNet(in_channels=3, base_channels=32, growth_rate=12, output_range="01").to(device)
 import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+from torchvision import transforms
 from models.cdan_denseunet import CDANDenseUNet
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# Loss & optimizer
-criterion = mse_loss_fn  # or a combination of mse + edge + ssim + lpips
-mse_loss_fn = nn.MSELoss()
-edge_loss_fn = SobelEdgeLoss()
-ssim_loss_fn = SSIMLoss()
-# LPIPS model
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-lpips_loss_fn = lpips.LPIPS(net='vgg').to(device)
-# === Model & Optimizer ===
-model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-# Training loop (simplified)
+import lpips
+# Hyperparameters
 learning_rate = 1e-4
 weight_decay = 1e-5
 num_epochs = 100
 batch_size = 8
-early_stopping_patience = 10
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Loss functions
+mse_loss_fn = nn.MSELoss()
+edge_loss_fn = SobelEdgeLoss()  # define your SobelEdgeLoss
+ssim_loss_fn = SSIMLoss()       # define your SSIMLoss
+lpips_loss_fn = lpips.LPIPS(net='vgg').to(device)
+# Dataset & DataLoader (assume train_loader is defined)
+# train_loader = DataLoader(...)
+# Model & Optimizer
+model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
+optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+# Loss weights
+w_mse, w_edge, w_ssim, w_lpips = 0.4, 0.15, 0.35, 0.1
+# Training loop
 model.train()
 for epoch in range(num_epochs):
-    for low_img, high_img in train_loader:  # use your DataLoader
+    for low_img, high_img in train_loader:
         low_img, high_img = low_img.to(device), high_img.to(device)
         optimizer.zero_grad()
         output = model(low_img)
-        loss = criterion(output, high_img)
+        # Combined loss
+        loss = (w_mse*mse_loss_fn(output, high_img) + 
+                w_edge*edge_loss_fn(output, high_img) +
+                w_ssim*ssim_loss_fn(output, high_img) +
+                w_lpips*lpips_loss_fn(2*output-1, 2*high_img-1).mean())
         loss.backward()
         optimizer.step()
     print(f"Epoch {epoch+1}/{num_epochs} Loss: {loss.item():.4f}")
-# Save model weights
+# Save model
 torch.save(model.state_dict(), "/content/saved_model/cdan_denseunet_isp_weights.pth")
 print("✅ Model weights saved as .pth")
-
