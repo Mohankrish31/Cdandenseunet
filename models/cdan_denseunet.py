@@ -67,7 +67,7 @@ class _DenseBlock(nn.Module):
         self.block = nn.Sequential(*layers)
         self.out_channels = channels
     def forward(self, x):
-        return self.block(x
+        return self.block(x)
 class Bottleneck(nn.Module):
     def __init__(self, in_channels, num_layers, growth_rate, drop_rate=0.0):
         super().__init__()
