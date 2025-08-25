@@ -1,34 +1,21 @@
-import torch
-from torch.utils.data import DataLoader
-from torchvision import transforms
-import os
-from dataset import LowLightDataset
-from models.cdan_denseunet import CDANDenseUNet
-dataset_root = "/content/cvccolondbsplit"
-train_low_dir = os.path.join(dataset_root, "train", "low")
-train_high_dir = os.path.join(dataset_root, "train", "high")
-transform = transforms.ToTensor()
-train_dataset = LowLightDataset(low_root=train_low_dir, high_root=train_high_dir, transform=transform)
-train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
-criterion = torch.nn.MSELoss()
-num_epochs = 100
-save_path = "/content/saved_model/cdan_denseunet_isp_weights.pth"
-os.makedirs(os.path.dirname(save_path), exist_ok=True)
-model.train()
-for epoch in range(num_epochs):
-    for low_img, high_img in train_loader:
-        low_img, high_img = low_img.to(device), high_img.to(device)
-        enhanced = model(low_img)
-        loss = criterion(enhanced, high_img)
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-    print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}")
-    # Optional checkpoint every 10 epochs
-    if (epoch+1) % 10 == 0:
-        torch.save(model.state_dict(), f"/content/saved_model/epoch_{epoch+1}.pth")
-torch.save(model.state_dict(), save_path)
-print("✅ Final model saved:", save_path)
+step 1: Prepare environment 
+pip install torch torchvision lpips numpy Pillow tqdm matplotlib opencv-python scikit-image
+step 2 : Intialize the model
+model = CDANDenseUNet(in_channels=3,out_channels=3, base_channels=32, growth_rate=12,,output_range="01").to(device)
+step 3: load the model parameters
+model.load_state_dict(torch.load("cdan_denseunet_isp_weights.pth"))
+Set the model to evaluation mode
+model.eval()
+step 5 : Make predictions on new image
+with torch.no_grad():
+    for fname in os.listdir(input_dir):
+        if not fname.lower().endswith(('.png', '.jpg', '.jpeg')):
+            continue
+        img_path = os.path.join(input_dir, fname)
+        inp = preprocess_image(img_path).to(device)
+        out = model(inp)
+step 6:
+        out = torch.clamp(out.squeeze(0), 0, 1).cpu()
+        if out.shape[0] == 1:
+            out = out.repeat(3, 1, 1)
+        out_img = to_pil_image(out)
