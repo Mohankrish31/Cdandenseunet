@@ -4,36 +4,53 @@ import numpy as np
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 import random
-def simulate_low_light(image, brightness_range=(0.5, 0.8),
-                       gamma_range=(1.0, 1.5),
-                       poisson_scale=(5, 20),
-                       gaussian_std=(0.005, 0.02)):
+def srgb_to_linear(image):
     """
-    Simulate realistic low-light image with:
-    - brightness reduction
-    - gamma correction
-    - Poisson noise
-    - Gaussian noise
+    Converts an sRGB image (0-255 uint8) to a linear image (0-1 float).
+    This is a critical first step to simulate a camera's sensor.
     """
-    # Convert to HSV for brightness adjustment
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV).astype(np.float32)
-    factor = random.uniform(*brightness_range)
-    hsv[..., 2] = np.clip(hsv[..., 2] * factor, 0, 255)
-    # Convert back to BGR
-    low_light = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
-    # Apply gamma correction
-    gamma = random.uniform(*gamma_range)
-    low_light = np.power(low_light / 255.0, gamma) * 255.0
-    # Apply Poisson noise
-    scale = random.uniform(*poisson_scale)
-    poisson_noisy = np.random.poisson(low_light * scale) / scale
-    low_light = np.clip(poisson_noisy, 0, 255)
-    # Apply Gaussian noise
-    mean = 0
-    std = random.uniform(*gaussian_std) * 255
-    gaussian_noise = np.random.normal(mean, std, low_light.shape)
-    low_light = np.clip(low_light + gaussian_noise, 0, 255).astype(np.uint8)
-    return low_light
+    image = image.astype(np.float32) / 255.0
+    linear_image = np.where(image <= 0.04045, image / 12.92, ((image + 0.055) / 1.055) ** 2.4)
+    return linear_image
+def linear_to_srgb(image):
+    """
+    Converts a linear image (0-1 float) to an sRGB image (0-255 uint8).
+    This is the final step to prepare the image for display.
+    """
+    srgb_image = np.where(image <= 0.0031308, image * 12.92, 1.055 * (image ** (1/2.4)) - 0.055)
+    srgb_image = np.clip(srgb_image * 255.0, 0, 255).astype(np.uint8)
+    return srgb_image
+def simulate_low_light_isp(image, exposure_range=(0.02, 0.1),
+                          white_balance_range=(0.8, 1.2),
+                          poisson_gain_range=(0.02, 0.1),
+                          read_noise_std=(0.001, 0.005)):
+    """
+    Simulates low-light conditions by following a simplified ISP pipeline.
+    """
+    # 1. Convert to Linear Space (Inverse Gamma) ⏪
+    linear_img = srgb_to_linear(image)
+    # 2. Simulate Low Exposure ⏪
+    exposure = random.uniform(*exposure_range)
+    low_exposure_img = linear_img * exposure
+    # 3. Apply Combined Poisson-Gaussian Noise ⏪
+    # Poisson noise is signal-dependent, Gaussian noise is not.
+    poisson_gain = random.uniform(*poisson_gain_range)
+    poisson_noise = np.random.poisson(low_exposure_img / poisson_gain) * poisson_gain
+    read_noise_stdev = random.uniform(*read_noise_std)
+    gaussian_noise = np.random.normal(0, read_noise_stdev, linear_img.shape)
+    noisy_linear_img = np.clip(poisson_noise + gaussian_noise, 0, 1)
+    # 4. Apply White Balance ⏪
+    # Randomly scale color channels to simulate white balance variations
+    white_balance_r = random.uniform(*white_balance_range)
+    white_balance_g = random.uniform(*white_balance_range)
+    white_balance_b = random.uniform(*white_balance_range)
+    # Apply gains to noisy linear image
+    noisy_linear_img[:, :, 2] *= white_balance_b  # B
+    noisy_linear_img[:, :, 1] *= white_balance_g  # G
+    noisy_linear_img[:, :, 0] *= white_balance_r  # R
+    # 5. Convert to sRGB Space (Gamma Correction) ⏪
+    low_light_srgb = linear_to_srgb(noisy_linear_img)
+    return low_light_srgb
 def prepare_dataset(input_dir, output_dir, val_ratio=0.1, test_ratio=0.2, resize_size=(224, 224)):
     # Read all images
     image_list = [f for f in os.listdir(input_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
@@ -60,13 +77,12 @@ def prepare_dataset(input_dir, output_dir, val_ratio=0.1, test_ratio=0.2, resize
                 continue
             # Resize
             image = cv2.resize(image, resize_size)
-            # Generate low-light image
-            low_light_img = simulate_low_light(image)
+            # Generate low-light image with the new ISP-based function
+            low_light_img = simulate_low_light_isp(image)
             # Save high and low images
             cv2.imwrite(os.path.join(high_dir, fname), image)
             cv2.imwrite(os.path.join(low_dir, fname), low_light_img)
     print("\n✅ Dataset preparation complete.")
-# === Run script ===
 if __name__ == "__main__":
     original_dataset_path = "/content/cvccolondb/data/train/images"
     output_dataset_path = "/content/cvccolondbsplit"
