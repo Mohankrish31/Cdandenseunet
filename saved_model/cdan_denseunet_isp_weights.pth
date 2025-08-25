@@ -6,7 +6,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # Initialize model
 model = CDANDenseUNet(in_channels=3, base_channels=32, growth_rate=12, output_range="01").to(device)
 # Loss & optimizer
-criterion = torch.nn.MSELoss()
 mse_loss_fn = nn.MSELoss()
 edge_loss_fn = SobelEdgeLoss()
 ssim_loss_fn = SSIMLoss()
