@@ -17,7 +17,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ------------------- Load Model -------------------
 try:
     # ⚠️ Make sure you use the SAME output_range as training
-    model = CDANDenseUNet(in_channels=3, base_channels=32, output_range="01").to(device)
+    model = CDANDenseUNet(in_channels=3, base_channels=32, output_range="11").to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
     print("✅ Model loaded successfully.")
