@@ -21,11 +21,12 @@ def linear_to_srgb(image):
     srgb_image = np.clip(srgb_image * 255.0, 0, 255).astype(np.uint8)
     return srgb_image
 def simulate_low_light_isp(image, exposure_range=(0.02, 0.1),
-                          white_balance_range=(0.8, 1.2),
-                          poisson_gain_range=(0.02, 0.1),
-                          read_noise_std=(0.001, 0.005)):
+                             white_balance_range=(0.8, 1.2),
+                             poisson_gain_range=(0.02, 0.1),
+                             read_noise_std=(0.001, 0.005),
+                             brightness_scaling_factor=(0.1, 0.5)):
     """
-    Simulates low-light conditions by following a simplified ISP pipeline.
+    Simulates low-light conditions by following a corrected ISP pipeline.
     """
     # 1. Convert to Linear Space (Inverse Gamma) ⏪
     linear_img = srgb_to_linear(image)
@@ -33,14 +34,12 @@ def simulate_low_light_isp(image, exposure_range=(0.02, 0.1),
     exposure = random.uniform(*exposure_range)
     low_exposure_img = linear_img * exposure
     # 3. Apply Combined Poisson-Gaussian Noise ⏪
-    # Poisson noise is signal-dependent, Gaussian noise is not.
     poisson_gain = random.uniform(*poisson_gain_range)
     poisson_noise = np.random.poisson(low_exposure_img / poisson_gain) * poisson_gain
     read_noise_stdev = random.uniform(*read_noise_std)
     gaussian_noise = np.random.normal(0, read_noise_stdev, linear_img.shape)
-    noisy_linear_img = np.clip(poisson_noise + gaussian_noise, 0, 1)
+    noisy_linear_img = poisson_noise + gaussian_noise
     # 4. Apply White Balance ⏪
-    # Randomly scale color channels to simulate white balance variations
     white_balance_r = random.uniform(*white_balance_range)
     white_balance_g = random.uniform(*white_balance_range)
     white_balance_b = random.uniform(*white_balance_range)
@@ -48,8 +47,12 @@ def simulate_low_light_isp(image, exposure_range=(0.02, 0.1),
     noisy_linear_img[:, :, 2] *= white_balance_b  # B
     noisy_linear_img[:, :, 1] *= white_balance_g  # G
     noisy_linear_img[:, :, 0] *= white_balance_r  # R
-    # 5. Convert to sRGB Space (Gamma Correction) ⏪
-    low_light_srgb = linear_to_srgb(noisy_linear_img)
+    # 5. Apply Global Brightness Scaling ⏪
+    # This step is key to avoiding the "gray box" issue
+    brightness_factor = random.uniform(*brightness_scaling_factor)
+    noisy_linear_img = noisy_linear_img * brightness_factor
+    # 6. Clip and Convert to sRGB Space (Gamma Correction) ⏪
+    low_light_srgb = linear_to_srgb(np.clip(noisy_linear_img, 0, 1))
     return low_light_srgb
 def prepare_dataset(input_dir, output_dir, val_ratio=0.1, test_ratio=0.2, resize_size=(224, 224)):
     # Read all images
@@ -81,7 +84,7 @@ def prepare_dataset(input_dir, output_dir, val_ratio=0.1, test_ratio=0.2, resize
             low_light_img = simulate_low_light_isp(image)
             # Save high and low images
             cv2.imwrite(os.path.join(high_dir, fname), image)
-            cv2.imwrite(os.path.join(low_dir, fname), low_light_img)
+            cv2.imwrite(os.path.join(low_dir, fname), low_light_img)  
     print("\n✅ Dataset preparation complete.")
 if __name__ == "__main__":
     original_dataset_path = "/content/cvccolondb/data/train/images"
