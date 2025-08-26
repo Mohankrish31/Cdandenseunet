@@ -11,7 +11,6 @@ import numpy as np
 from math import exp
 from models.cdan_denseunet import CDANDenseUNet
 # from utils import plot_loss_curve  # Uncomment if available
-
 # === Hyperparameters ===
 learning_rate = 1e-4
 weight_decay = 1e-5
@@ -19,7 +18,6 @@ num_epochs = 100
 batch_size = 8
 early_stopping_patience = 10
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 # === Dataset Class (augmentation only on input) ===
 class cvccolondbsplitDataset(Dataset):
     def __init__(self, enhanced_dir, high_dir, input_transform=None, target_transform=None):
@@ -28,24 +26,18 @@ class cvccolondbsplitDataset(Dataset):
         self.input_transform = input_transform
         self.target_transform = target_transform
         self.image_names = sorted(os.listdir(enhanced_dir))
-
     def __len__(self):
         return len(self.image_names)
-
     def __getitem__(self, idx):
         enhanced_path = os.path.join(self.enhanced_dir, self.image_names[idx])
         high_path = os.path.join(self.high_dir, self.image_names[idx])
-
         enhanced_img = Image.open(enhanced_path).convert("RGB")
         high_img = Image.open(high_path).convert("RGB")
-
         if self.input_transform:
             enhanced_img = self.input_transform(enhanced_img)
         if self.target_transform:
             high_img = self.target_transform(high_img)
-
         return enhanced_img, high_img
-
 # === Sobel Edge Loss ===
 class SobelEdgeLoss(nn.Module):
     def __init__(self):
@@ -58,7 +50,6 @@ class SobelEdgeLoss(nn.Module):
                                  [ 1.,  2.,  1.]]], dtype=torch.float32)
         self.sobel_x = sobel_x.unsqueeze(0)
         self.sobel_y = sobel_y.unsqueeze(0)
-
     def forward(self, pred, target):
         pred_gray = torch.mean(pred, dim=1, keepdim=True)
         target_gray = torch.mean(target, dim=1, keepdim=True)
@@ -72,18 +63,15 @@ class SobelEdgeLoss(nn.Module):
         pred_grad = torch.sqrt(pred_gx**2 + pred_gy**2 + 1e-6)
         target_grad = torch.sqrt(target_gx**2 + target_gy**2 + 1e-6)
         return F.l1_loss(pred_grad, target_grad)
-
 # === SSIM Loss ===
 def gaussian(window_size, sigma):
     gauss = torch.Tensor([exp(-(x - window_size//2)**2 / float(2*sigma**2)) for x in range(window_size)])
     return gauss / gauss.sum()
-
 def create_window(window_size, channel):
     _1D_window = gaussian(window_size, 1.5).unsqueeze(1)
     _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
     window = _2D_window.expand(channel, 1, window_size, window_size).contiguous()
     return window
-
 class SSIMLoss(nn.Module):
     def __init__(self, window_size=11, size_average=True):
         super(SSIMLoss, self).__init__()
@@ -91,7 +79,6 @@ class SSIMLoss(nn.Module):
         self.size_average = size_average
         self.channel = 1
         self.window = create_window(window_size, self.channel)
-
     def forward(self, img1, img2):
         (_, channel, _, _) = img1.size()
         if channel == self.channel and self.window.data.type() == img1.data.type():
@@ -113,13 +100,11 @@ class SSIMLoss(nn.Module):
         ssim_map = ((2*mu1_mu2 + C1)*(2*sigma12 + C2)) / \
                    ((mu1_sq + mu2_sq + C1)*(sigma1_sq + sigma2_sq + C2))
         return 1 - ssim_map.mean() if self.size_average else 1 - ssim_map.mean(1).mean(1).mean(1)
-
 # === Loss Functions ===
 mse_loss_fn = nn.MSELoss()
 edge_loss_fn = SobelEdgeLoss()
 ssim_loss_fn = SSIMLoss()
 lpips_loss_fn = lpips.LPIPS(net='vgg').to(device)
-
 def total_loss_fn(pred, target, w_mse, w_lpips, w_edge, w_ssim, lpips_model):
     mse   = mse_loss_fn(pred, target)
     edge  = edge_loss_fn(pred, target)
@@ -128,13 +113,11 @@ def total_loss_fn(pred, target, w_mse, w_lpips, w_edge, w_ssim, lpips_model):
     ssim  = ssim_loss_fn(pred, target)
     total = w_mse*mse + w_lpips*lp + w_edge*edge + w_ssim*ssim
     return total, mse, lp, edge, ssim
-
 # === Paths & Transforms ===
 train_enhanced_dir = "/content/outputs/train_enhanced"
 train_high_dir     = "/content/cvccolondbsplit/train/high"
 val_enhanced_dir   = "/content/outputs/val_enhanced"
 val_high_dir       = "/content/cvccolondbsplit/val/high"
-
 input_transform = transforms.Compose([
     transforms.Resize((224,224)),
     transforms.ColorJitter(brightness=0.2, contrast=0.2),
@@ -144,29 +127,23 @@ target_transform = transforms.Compose([
     transforms.Resize((224,224)),
     transforms.ToTensor()
 ])
-
 train_dataset = cvccolondbsplitDataset(train_enhanced_dir, train_high_dir, input_transform, target_transform)
 val_dataset   = cvccolondbsplitDataset(val_enhanced_dir, val_high_dir, input_transform, target_transform)
-
 train_loader  = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 val_loader    = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-
 # === Model & Optimizer ===
 model = CDANDenseUNet(in_channels=3, base_channels=32, output_range="01").to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-
 # === Loss Weights (LPIPS lowered) ===
 w_mse   = 0.15
 w_lpips = 0.1
 w_edge  = 0.2
 w_ssim  = 0.4
-
 # === Training Loop ===
 best_val_loss = float('inf')
 patience_counter = 0
 train_losses = []
 val_losses = []
-
 for epoch in range(num_epochs):
     # --- Training ---
     model.train()
@@ -181,17 +158,14 @@ for epoch in range(num_epochs):
         total_loss.backward()
         optimizer.step()
         running_loss += total_loss.item()
-
         # --- Debug: save first output of first batch ---
         if epoch == 0 and batch_idx == 0:
             out = output.detach().cpu().clamp(0, 1)
             out_img = transforms.ToPILImage()(out[0])
             out_img.save("result.png")
             print("🖼️ Saved debug image: result.png")
-
     avg_train_loss = running_loss / len(train_loader)
     train_losses.append(avg_train_loss)
-
     # --- Validation ---
     model.eval()
     val_running_loss = 0.0
@@ -203,12 +177,9 @@ for epoch in range(num_epochs):
                 output, target_img, w_mse, w_lpips, w_edge, w_ssim, lpips_loss_fn
             )
             val_running_loss += total_loss.item()
-
     avg_val_loss = val_running_loss / len(val_loader)
     val_losses.append(avg_val_loss)
-
     print(f"Epoch [{epoch+1}/{num_epochs}] | Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
-
     # --- Early Stopping & Save Best ---
     if avg_val_loss < best_val_loss:
         best_val_loss = avg_val_loss
