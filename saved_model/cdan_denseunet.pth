@@ -1,5 +1,6 @@
 # === Imports and Setup ===
 import os
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,8 +10,9 @@ from PIL import Image
 import lpips
 import numpy as np
 from math import exp
+# Add model folder to path
+sys.path.append('/content/CdanDenseUNet')
 from models.cdan_denseunet import CDANDenseUNet
-# from utils import plot_loss_curve  # Uncomment if available
 # === Hyperparameters ===
 learning_rate = 1e-4
 weight_decay = 1e-5
@@ -18,36 +20,34 @@ num_epochs = 100
 batch_size = 8
 early_stopping_patience = 10
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# === Dataset Class (augmentation only on input) ===
+# === Dataset Class ===
+# NOTE: The parameter names 'enhanced_dir' and 'high_dir' are used,
+# but we will pass the correct 'low_dir' and 'high_dir' during instantiation.
 class cvccolondbsplitDataset(Dataset):
-    def __init__(self, enhanced_dir, high_dir, input_transform=None, target_transform=None):
-        self.enhanced_dir = enhanced_dir
-        self.high_dir = high_dir
+    def __init__(self, input_dir, target_dir, input_transform=None, target_transform=None):
+        self.input_dir = input_dir
+        self.target_dir = target_dir
         self.input_transform = input_transform
         self.target_transform = target_transform
-        self.image_names = sorted(os.listdir(enhanced_dir))
+        self.image_names = sorted(os.listdir(input_dir))
     def __len__(self):
         return len(self.image_names)
     def __getitem__(self, idx):
-        enhanced_path = os.path.join(self.enhanced_dir, self.image_names[idx])
-        high_path = os.path.join(self.high_dir, self.image_names[idx])
-        enhanced_img = Image.open(enhanced_path).convert("RGB")
-        high_img = Image.open(high_path).convert("RGB")
+        input_path = os.path.join(self.input_dir, self.image_names[idx])
+        target_path = os.path.join(self.target_dir, self.image_names[idx])
+        input_img = Image.open(input_path).convert("RGB")
+        target_img = Image.open(target_path).convert("RGB")
         if self.input_transform:
-            enhanced_img = self.input_transform(enhanced_img)
+            input_img = self.input_transform(input_img)
         if self.target_transform:
-            high_img = self.target_transform(high_img)
-        return enhanced_img, high_img
+            target_img = self.target_transform(target_img)
+        return input_img, target_img
 # === Sobel Edge Loss ===
 class SobelEdgeLoss(nn.Module):
     def __init__(self):
         super(SobelEdgeLoss, self).__init__()
-        sobel_x = torch.tensor([[[-1., 0., 1.],
-                                 [-2., 0., 2.],
-                                 [-1., 0., 1.]]], dtype=torch.float32)
-        sobel_y = torch.tensor([[[-1., -2., -1.],
-                                 [ 0.,  0.,  0.],
-                                 [ 1.,  2.,  1.]]], dtype=torch.float32)
+        sobel_x = torch.tensor([[[-1., 0., 1.], [-2., 0., 2.], [-1., 0., 1.]]], dtype=torch.float32)
+        sobel_y = torch.tensor([[[-1., -2., -1.], [0., 0., 0.], [1., 2., 1.]]], dtype=torch.float32)
         self.sobel_x = sobel_x.unsqueeze(0)
         self.sobel_y = sobel_y.unsqueeze(0)
     def forward(self, pred, target):
@@ -114,21 +114,25 @@ def total_loss_fn(pred, target, w_mse, w_lpips, w_edge, w_ssim, lpips_model):
     total = w_mse*mse + w_lpips*lp + w_edge*edge + w_ssim*ssim
     return total, mse, lp, edge, ssim
 # === Paths & Transforms ===
-train_enhanced_dir = "/content/outputs/train_enhanced"
-train_high_dir     = "/content/cvccolondbsplit/train/high"
-val_enhanced_dir   = "/content/outputs/val_enhanced"
-val_high_dir       = "/content/cvccolondbsplit/val/high"
+# ✅ CORRECTED: Use 'low' directories as input and 'high' as targets
+train_low_dir = "/content/cvccolondbsplit/train/low"
+train_high_dir= "/content/cvccolondbsplit/train/high"
+val_low_dir   = "/content/cvccolondbsplit/val/low"
+val_high_dir  = "/content/cvccolondbsplit/val/high"
+# ✅ CORRECTED: Added RandomHorizontalFlip for better data augmentation
 input_transform = transforms.Compose([
     transforms.Resize((224,224)),
     transforms.ColorJitter(brightness=0.2, contrast=0.2),
+    transforms.RandomHorizontalFlip(),
     transforms.ToTensor()
 ])
 target_transform = transforms.Compose([
     transforms.Resize((224,224)),
     transforms.ToTensor()
 ])
-train_dataset = cvccolondbsplitDataset(train_enhanced_dir, train_high_dir, input_transform, target_transform)
-val_dataset   = cvccolondbsplitDataset(val_enhanced_dir, val_high_dir, input_transform, target_transform)
+# ✅ CORRECTED: Pass the 'low' directory as input to the dataset
+train_dataset = cvccolondbsplitDataset(train_low_dir, train_high_dir, input_transform, target_transform)
+val_dataset   = cvccolondbsplitDataset(val_low_dir, val_high_dir, input_transform, target_transform)
 train_loader  = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 val_loader    = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 # === Model & Optimizer ===
@@ -191,6 +195,4 @@ for epoch in range(num_epochs):
         if patience_counter >= early_stopping_patience:
             print(f"⏹️ Early stopping at epoch {epoch+1}")
             break
-# === Plot Loss Curve after Training ===
-# plot_loss_curve(train_losses, val_losses) # Uncomment if you have this utility
 print("\n✅ Training complete!")
