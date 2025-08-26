@@ -4,7 +4,6 @@ import torch
 import numpy as np
 from PIL import Image
 from torchvision.transforms.functional import to_pil_image
-from torchvision import transforms
 # Add model folder to path
 sys.path.append('/content/CdanDenseUNet')
 from models.cdan_denseunet import CDANDenseUNet
@@ -17,8 +16,7 @@ os.makedirs(output_dir, exist_ok=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ------------------- Load Model -------------------
 try:
-    # ⚠️ Use the SAME output_range as training
-    model = CDANDenseUNet(in_channels=3, base_channels=32, output_range="11").to(device)
+    model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)  # ✅ no output_range
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
     print("✅ Model loaded successfully.")
@@ -29,7 +27,7 @@ except FileNotFoundError:
 def preprocess_image(img_path, target_size=(224, 224)):
     img = Image.open(img_path).convert("RGB")
     img = img.resize(target_size)
-    img_array = np.array(img).astype(np.float32) / 255.0
+    img_array = np.array(img).astype(np.float32) / 255.0  # ✅ [0,255] → [0,1]
     img_tensor = torch.tensor(img_array).permute(2, 0, 1).unsqueeze(0).float()
     return img_tensor
 # ------------------- Inference -------------------
@@ -39,16 +37,13 @@ with torch.no_grad():
             continue
         img_path = os.path.join(input_dir, fname)
         inp = preprocess_image(img_path).to(device)
-        # Run the model and get output
+        # Run the model
         out = model(inp).squeeze(0).cpu()   # [C,H,W]
-        # Rescale if the model was trained with output_range="11" (tanh)
-        if getattr(model, "output_range", "01") == "11":
-            out = (out + 1) / 2             # [-1,1] -> [0,1]
-        # Clamp to valid image range
+        # Clamp to valid [0,1] range (safety)
         out = torch.clamp(out, 0, 1)
-        # Optional: check min/max for debugging
+        # Debug: check pixel range
         print(fname, "-> min:", out.min().item(), "max:", out.max().item())
-        # Convert single-channel to 3-channel if needed
+        # Handle grayscale case
         if out.shape[0] == 1:
             out = out.repeat(3, 1, 1)
         # Convert to PIL image and save
