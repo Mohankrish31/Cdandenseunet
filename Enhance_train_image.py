@@ -16,7 +16,8 @@ os.makedirs(output_dir, exist_ok=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ------------------- Load Model -------------------
 try:
-    model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
+    # ⚠️ Make sure you use the SAME output_range as training
+    model = CDANDenseUNet(in_channels=3, base_channels=32, output_range="01").to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
     print("✅ Model loaded successfully.")
@@ -37,9 +38,12 @@ with torch.no_grad():
             continue
         img_path = os.path.join(input_dir, fname)
         inp = preprocess_image(img_path).to(device)
-        out = model(inp)
-        out = torch.clamp(out.squeeze(0), 0, 1).cpu()
-        print(fname, "-> min:", out.min().item(), "max:", out.max().item())  # Debug
+        out = model(inp).squeeze(0).cpu()
+        # ✅ Handle both output ranges
+        if getattr(model, "output_range", "01") == "11":
+            out = (out + 1) / 2  # map [-1,1] -> [0,1]
+        out = torch.clamp(out, 0, 1)
+        print(fname, "-> min:", out.min().item(), "max:", out.max().item())
         if out.shape[0] == 1:
             out = out.repeat(3, 1, 1)
         out_img = to_pil_image(out)
