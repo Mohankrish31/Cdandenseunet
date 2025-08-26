@@ -16,7 +16,8 @@ os.makedirs(output_dir, exist_ok=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ------------------- Load Model -------------------
 try:
-    model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)  # ✅ no output_range
+    # Model is loaded without output_range specified, but we know it was trained with it.
+    model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
     print("✅ Model loaded successfully.")
@@ -27,7 +28,7 @@ except FileNotFoundError:
 def preprocess_image(img_path, target_size=(224, 224)):
     img = Image.open(img_path).convert("RGB")
     img = img.resize(target_size)
-    img_array = np.array(img).astype(np.float32) / 255.0  # ✅ [0,255] → [0,1]
+    img_array = np.array(img).astype(np.float32) / 255.0  # [0,255] → [0,1]
     img_tensor = torch.tensor(img_array).permute(2, 0, 1).unsqueeze(0).float()
     return img_tensor
 # ------------------- Inference -------------------
@@ -38,7 +39,9 @@ with torch.no_grad():
         img_path = os.path.join(input_dir, fname)
         inp = preprocess_image(img_path).to(device)
         # Run the model
-        out = model(inp).squeeze(0).cpu()   # [C,H,W]
+        out = model(inp).squeeze(0).cpu()  # [C,H,W]
+        # ✅ CORRECTION: Convert [-1, 1] to [0, 1] before clamping
+        out = (out + 1) / 2
         # Clamp to valid [0,1] range (safety)
         out = torch.clamp(out, 0, 1)
         # Debug: check pixel range
