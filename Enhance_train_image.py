@@ -10,7 +10,7 @@ from models.cdan_denseunet import CDANDenseUNet
 # ------------------- Paths -------------------
 input_dir = "/content/cvccolondbsplit/train/low"
 output_dir = "/content/outputs/train_enhanced"
-model_path = "/content/saved_model/cdan_denseunet_isp_weights.pth" # Use the new weights
+model_path = "/content/saved_model/cdan_denseunet_isp_weights.pth"
 os.makedirs(output_dir, exist_ok=True)
 # ------------------- Device -------------------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -28,7 +28,7 @@ def preprocess_image(img_path, target_size=(224, 224)):
     img = Image.open(img_path).convert("RGB")
     img = img.resize(target_size)
     img_array = np.array(img).astype(np.float32) / 255.0
-    img_tensor = torch.tensor(img_array).permute(2, 0, 1).unsqueeze(0)
+    img_tensor = torch.tensor(img_array).permute(2, 0, 1).unsqueeze(0).float()
     return img_tensor
 # ------------------- Inference -------------------
 with torch.no_grad():
@@ -39,6 +39,7 @@ with torch.no_grad():
         inp = preprocess_image(img_path).to(device)
         out = model(inp)
         out = torch.clamp(out.squeeze(0), 0, 1).cpu()
+        print(fname, "-> min:", out.min().item(), "max:", out.max().item())  # Debug
         if out.shape[0] == 1:
             out = out.repeat(3, 1, 1)
         out_img = to_pil_image(out)
