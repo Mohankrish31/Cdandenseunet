@@ -16,7 +16,6 @@ os.makedirs(output_dir, exist_ok=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ------------------- Load Model -------------------
 try:
-    # Model is loaded without output_range specified, but we know it was trained with it.
     model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
@@ -40,9 +39,13 @@ with torch.no_grad():
         inp = preprocess_image(img_path).to(device)
         # Run the model
         out = model(inp).squeeze(0).cpu()  # [C,H,W]
-        # ✅ CORRECTION: Convert [-1, 1] to [0, 1] before clamping
+        # ✅ Step 1: If output is in [-1,1], shift to [0,1]
         out = (out + 1) / 2
-        # Clamp to valid [0,1] range (safety)
+        # ✅ Step 2: Dynamically rescale to [0,1]
+        min_val, max_val = out.min(), out.max()
+        if max_val > min_val:  # avoid div by zero
+            out = (out - min_val) / (max_val - min_val)
+        # Clamp (safety)
         out = torch.clamp(out, 0, 1)
         # Debug: check pixel range
         print(fname, "-> min:", out.min().item(), "max:", out.max().item())
