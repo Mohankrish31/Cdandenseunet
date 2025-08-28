@@ -39,16 +39,15 @@ with torch.no_grad():
         inp = preprocess_image(img_path).to(device)
         # Run the model
         out = model(inp).squeeze(0).cpu()  # [C,H,W]
-        # ✅ Step 1: If output is in [-1,1], shift to [0,1]
-        out = (out + 1) / 2
-        # ✅ Step 2: Dynamically rescale to [0,1]
-        min_val, max_val = out.min(), out.max()
-        if max_val > min_val:  # avoid div by zero
-            out = (out - min_val) / (max_val - min_val)
-        # Clamp (safety)
+        # ⚠️ Removed (out+1)/2 since we expect model already outputs [0,1]
+        # Clamp just to be safe
         out = torch.clamp(out, 0, 1)
-        # Debug: check pixel range
-        print(fname, "-> min:", out.min().item(), "max:", out.max().item())
+        # 🔍 Debug channel stats
+        print(f"\n{fname} -> Overall min: {out.min().item():.4f}, max: {out.max().item():.4f}")
+        print("Shape:", out.shape)
+        print("Channel means:", out.mean(dim=(1, 2)))
+        print("Channel min:", [out[c].min().item() for c in range(out.shape[0])])
+        print("Channel max:", [out[c].max().item() for c in range(out.shape[0])])
         # Handle grayscale case
         if out.shape[0] == 1:
             out = out.repeat(3, 1, 1)
