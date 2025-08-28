@@ -16,7 +16,7 @@ os.makedirs(output_dir, exist_ok=True)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ------------------- Load Model -------------------
 try:
-    model = CDANDenseUNet(in_channels=3, base_channels=32).to(device)
+    model = CDANDenseUNet(in_channels=3, base_channels=32, output_range="01").to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
     print("✅ Model loaded successfully.")
@@ -39,9 +39,13 @@ with torch.no_grad():
         inp = preprocess_image(img_path).to(device)
         # Run the model
         out = model(inp).squeeze(0).cpu()  # [C,H,W]
-        # ⚠️ Removed (out+1)/2 since we expect model already outputs [0,1]
-        # Clamp just to be safe
+        # Clamp values to [0,1] just in case
         out = torch.clamp(out, 0, 1)
+        # 🔹 Channel-wise min-max scaling
+        for c in range(out.shape[0]):
+            min_c, max_c = out[c].min(), out[c].max()
+            if max_c > min_c:
+                out[c] = (out[c] - min_c) / (max_c - min_c)
         # 🔍 Debug channel stats
         print(f"\n{fname} -> Overall min: {out.min().item():.4f}, max: {out.max().item():.4f}")
         print("Shape:", out.shape)
