@@ -4,16 +4,20 @@ import torch
 import numpy as np
 from PIL import Image
 from torchvision.transforms.functional import to_pil_image
+
 # ------------------- Add model folder -------------------
 sys.path.append('/content/CdanDenseUNet')  # Change to your path
 from models.cdan_denseunet import CDANDenseUNet  # Your custom model
+
 # ------------------- Paths -------------------
 input_dir = "/content/cvccolondbsplit/train/low"  # Low-light images
 output_dir = "/content/outputs/train_enhanced"
 model_path = "/content/saved_model/cdan_denseunet.pth"
 os.makedirs(output_dir, exist_ok=True)
+
 # ------------------- Device -------------------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # ------------------- Preprocessing Function -------------------
 def preprocess_image(img_path, target_size=(224, 224)):
     """Load and preprocess image: RGB -> [0-1] float tensor"""
@@ -22,11 +26,13 @@ def preprocess_image(img_path, target_size=(224, 224)):
     img_array = np.array(img).astype(np.float32) / 255.0
     img_tensor = torch.tensor(img_array).permute(2, 0, 1).unsqueeze(0).float()
     return img_tensor
+
 # ------------------- Load Model -------------------
 model = CDANDenseUNet(in_channels=3, base_channels=32, output_range="01").to(device)
 model.load_state_dict(torch.load(model_path, map_location=device))
 model.eval()
 print("✅ Model loaded successfully.")
+
 # ------------------- Post-processing (Gamma Correction) -------------------
 def linear_to_srgb(image):
     """Convert linear [0-1] float to sRGB [0-255] uint8."""
@@ -37,6 +43,7 @@ def linear_to_srgb(image):
     )
     srgb_image = torch.clamp(srgb_image * 255.0, 0, 255).to(torch.uint8)
     return srgb_image
+
 # ------------------- Inference -------------------
 with torch.no_grad():
     for fname in os.listdir(input_dir):
@@ -51,9 +58,10 @@ with torch.no_grad():
         out = model(inp).squeeze(0).cpu()
         out = torch.clamp(out, 0, 1)
 
-        # --- Step 3: Min-max normalization ---
-        out = out - out.min()
-        out = out / (out.max() + 1e-8)
+        # --- Step 3: Per-channel Min-max normalization ---
+        for c in range(3):
+            out[c] = out[c] - out[c].min()
+            out[c] = out[c] / (out[c].max() + 1e-8)
 
         # --- Step 4: Post-processing (sRGB conversion) ---
         enhanced_img = linear_to_srgb(out)
@@ -68,4 +76,3 @@ with torch.no_grad():
         print(f"✅ Enhanced & saved: {fname}")
 
 print("\n✅ All images processed successfully!")
-
