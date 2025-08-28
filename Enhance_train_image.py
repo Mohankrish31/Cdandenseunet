@@ -2,8 +2,9 @@ import os
 import sys
 import torch
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 from torchvision.transforms.functional import to_pil_image
+import cv2
 
 # ------------------- Add model folder -------------------
 sys.path.append('/content/CdanDenseUNet')
@@ -36,6 +37,30 @@ def preprocess_image(img_path, target_size=(224, 224)):
     img_tensor = torch.tensor(img_array).permute(2, 0, 1).unsqueeze(0).float()
     return img_tensor
 
+# ------------------- CLAHE for contrast enhancement -------------------
+def clahe_enhance(img_np):
+    img_clahe = np.zeros_like(img_np)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    for c in range(3):
+        channel = (img_np[:,:,c]*255).astype(np.uint8)
+        channel = clahe.apply(channel)
+        img_clahe[:,:,c] = channel / 255.0
+    return img_clahe
+
+# ------------------- Gray World Color Correction -------------------
+def gray_world_correction(img_np):
+    mean_rgb = img_np.mean(axis=(0,1))
+    mean_gray = mean_rgb.mean()
+    scale = mean_gray / mean_rgb
+    img_corrected = img_np * scale
+    img_corrected = np.clip(img_corrected, 0, 1)
+    return img_corrected
+
+# ------------------- Noise Reduction -------------------
+def denoise_image(img_pil):
+    # Mild Gaussian blur
+    return img_pil.filter(ImageFilter.GaussianBlur(radius=0.5))
+
 # ------------------- Inference -------------------
 with torch.no_grad():
     for fname in os.listdir(input_dir):
@@ -43,41 +68,24 @@ with torch.no_grad():
             continue
         img_path = os.path.join(input_dir, fname)
         inp = preprocess_image(img_path).to(device)
-        
+
         # Run the model
         out = model(inp).squeeze(0).cpu()  # [C,H,W]
-        out = torch.clamp(out, 0, 1)      # Ensure values are in [0,1]
-
-        # ---------------- Simple Channel Scaling (reduce green) ----------------
-        channel_means = out.mean(dim=(1,2))          # [R_mean, G_mean, B_mean]
-        target_mean = channel_means.mean()           # Average of all channels
-        scale_factors = target_mean / channel_means  # Reduce green, adjust R/B
-        out = out * scale_factors.view(3,1,1)
         out = torch.clamp(out, 0, 1)
-        # -----------------------------------------------------------------------
 
-        # ---------------- Per-Channel Min-Max Scaling ----------------
-        for c in range(out.shape[0]):
-            min_c, max_c = out[c].min(), out[c].max()
-            if max_c > min_c:
-                out[c] = (out[c] - min_c) / (max_c - min_c)
-        # --------------------------------------------------------------------
+        # Convert to NumPy for post-processing
+        out_np = out.permute(1,2,0).numpy()
 
-        # ---------------- Debug channel stats -----------------
-        print(f"\n{fname} -> Overall min: {out.min().item():.4f}, max: {out.max().item():.4f}")
-        print("Shape:", out.shape)
-        print("Channel means:", out.mean(dim=(1, 2)))
-        print("Channel min:", [out[c].min().item() for c in range(out.shape[0])])
-        print("Channel max:", [out[c].max().item() for c in range(out.shape[0])])
+        # ------------------- Post-processing -------------------
+        out_np = clahe_enhance(out_np)            # Contrast enhancement
+        out_np = gray_world_correction(out_np)    # Color correction
+        out_pil = to_pil_image(torch.tensor(out_np).permute(2,0,1).float())
 
-        # Handle grayscale case
-        if out.shape[0] == 1:
-            out = out.repeat(3, 1, 1)
+        out_pil = denoise_image(out_pil)          # Noise reduction
 
-        # Convert to PIL image and save
-        out_img = to_pil_image(out)
+        # Save output
         save_path = os.path.join(output_dir, fname)
-        out_img.save(save_path)
+        out_pil.save(save_path)
         print(f"✅ Enhanced & saved: {fname}")
 
 print("\n✅ All images processed successfully!")
