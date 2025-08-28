@@ -9,8 +9,8 @@ from torchvision.transforms.functional import to_pil_image
 sys.path.append('/content/CdanDenseUNet')  # change to your path
 from models.cdan_denseunet import CDANDenseUNet  # replace if using custom model
 # ------------------- Paths -------------------
-input_dir = "/content/cvccolondbsplit/test/low"   # low-light images
-output_dir = "/content/outputs/test_enhanced"    # save enhanced images
+input_dir = "/content/cvccolondbsplit/train/low"   # low-light images
+output_dir = "/content/outputs/train_enhanced"    # save enhanced images
 model_path = "/content/saved_model/cdan_denseunet.pth"  # trained weights
 os.makedirs(output_dir, exist_ok=True)
 # ------------------- Device -------------------
