@@ -51,13 +51,6 @@ with torch.no_grad():
         if not fname.lower().endswith(('.png', '.jpg', '.jpeg')):
             continue
         img_path = os.path.join(input_dir, fname)
-
-        # --- Preview input image with OpenCV ---
-        img_cv = cv2.imread(img_path)
-        cv2.imshow("Input Image", img_cv)
-        cv2.waitKey(0)  # Press any key to continue
-        cv2.destroyAllWindows()
-
         # --- Run preprocessing ---
         inp = preprocess_image(img_path).to(device)
 
