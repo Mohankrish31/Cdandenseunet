@@ -4,11 +4,9 @@ import torch
 import numpy as np
 from PIL import Image
 from torchvision.transforms.functional import to_pil_image
-
 # ------------------- Add model folder -------------------
 sys.path.append('/content/CdanDenseUNet')  # Change to your path
 from models.cdan_denseunet import CDANDenseUNet  # Your custom model
-
 # ------------------- Paths -------------------
 input_dir = "/content/cvccolondbsplit/train/low"  # Low-light images
 output_dir = "/content/outputs/train_enhanced"
