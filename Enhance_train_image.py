@@ -58,21 +58,22 @@ with torch.no_grad():
         out = model(inp).squeeze(0).cpu()
         out = torch.clamp(out, 0, 1)
 
-        # --- Step 3: Per-channel Min-max normalization ---
-        for c in range(3):
-            out[c] = out[c] - out[c].min()
-            out[c] = out[c] / (out[c].max() + 1e-8)
+        # --- Step 3: Min-max normalization across all channels (avoid pink tint) ---
+        min_val = out.min()
+        max_val = out.max()
+        out = (out - min_val) / (max_val - min_val + 1e-8)
 
-        # --- Step 4: Post-processing (sRGB conversion) ---
+        # --- Step 4: Compute average RGB value ---
+        avg_rgb = out.mean().item()  # single scalar for overall brightness
+        print(f"{fname} -> Average RGB: {avg_rgb:.4f}")
+
+        # --- Step 5: Post-processing (sRGB conversion) ---
         enhanced_img = linear_to_srgb(out)
 
-        # --- Step 5: Save Image ---
+        # --- Step 6: Save Image ---
         out_pil = to_pil_image(enhanced_img)
         save_path = os.path.join(output_dir, fname)
         out_pil.save(save_path)
-
-        # --- Debug Info ---
-        print(f"{fname} -> min: {out.min().item():.4f}, max: {out.max().item():.4f}, mean per channel: {out.mean(dim=(1,2))}")
         print(f"✅ Enhanced & saved: {fname}")
 
 print("\n✅ All images processed successfully!")
