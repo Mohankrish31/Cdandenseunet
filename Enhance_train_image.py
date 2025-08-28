@@ -46,21 +46,22 @@ with torch.no_grad():
         
         # Run the model
         out = model(inp).squeeze(0).cpu()  # [C,H,W]
-        out = torch.clamp(out, 0, 1)       # Ensure values are in [0,1]
+        out = torch.clamp(out, 0, 1)      # Ensure values are in [0,1]
 
-        # ---------------- Simple Channel Scaling ----------------
-        channel_means = out.mean(dim=(1,2))         # [R_mean, G_mean, B_mean]
-        target_mean = channel_means.mean()          # Average of all channels
-        scale_factors = target_mean / channel_means # Compute scaling factors
-        out = out * scale_factors.view(3, 1, 1)    # Scale channels
-        out = torch.clamp(out, 0, 1)               # Clip to [0,1]
+        # ---------------- Simple Channel Scaling (reduce green) ----------------
+        channel_means = out.mean(dim=(1,2))          # [R_mean, G_mean, B_mean]
+        target_mean = channel_means.mean()           # Average of all channels
+        scale_factors = target_mean / channel_means  # Reduce green, adjust R/B
+        out = out * scale_factors.view(3,1,1)
+        out = torch.clamp(out, 0, 1)
+        # -----------------------------------------------------------------------
 
         # ---------------- Per-Channel Min-Max Scaling ----------------
         for c in range(out.shape[0]):
             min_c, max_c = out[c].min(), out[c].max()
             if max_c > min_c:
                 out[c] = (out[c] - min_c) / (max_c - min_c)
-        # ----------------------------------------------------------------
+        # --------------------------------------------------------------------
 
         # ---------------- Debug channel stats -----------------
         print(f"\n{fname} -> Overall min: {out.min().item():.4f}, max: {out.max().item():.4f}")
