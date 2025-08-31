@@ -12,7 +12,7 @@ from models.cdan_denseunet import CDANDenseUNet  # replace with your model class
 # ------------------- Paths -------------------
 input_dir = "/content/cvccolondbsplit/test/low"   # input low-light images
 output_dir = "/content/outputs/test_enhanced"     # output folder
-model_path = "/content/checkpoints/cdan_denseunet.pth"  # trained weights
+model_path = "/content/saved_model/cdan_denseunet.pth"  # trained weights
 
 os.makedirs(output_dir, exist_ok=True)
 
