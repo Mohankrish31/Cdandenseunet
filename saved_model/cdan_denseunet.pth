@@ -136,7 +136,7 @@ val_dataset   = cvccolondbsplitDataset(val_low_dir, val_high_dir, input_transfor
 train_loader  = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 val_loader    = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 # === Model & Optimizer ===
-model = CDANDenseUNet(in_channels=3, base_channels=32, output_range="01").to(device)
+model = CDANDenseUNet(in_channels=3, base_channels=32,growth_rate=12,output_range="01").to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 # === Loss Weights (LPIPS lowered) ===
 w_mse   = 0.15
