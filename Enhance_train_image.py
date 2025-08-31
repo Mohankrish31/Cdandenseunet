@@ -8,8 +8,8 @@ from torchvision.transforms import ToTensor, ToPILImage
 sys.path.append('/content/CdanDenseUNet')  # change if needed
 from models.cdan_denseunet import CDANDenseUNet
 # ------------------- Paths -------------------
-input_dir = "/content/cvccolondbsplit/test/low"   # folder with low-light input images
-output_dir = "/content/outputs/test_enhanced"    # folder to save enhanced images
+input_dir = "/content/cvccolondbsplit/train/low"   # folder with low-light input images
+output_dir = "/content/outputs/train_enhanced"    # folder to save enhanced images
 model_path = "/content/saved_model/cdan_denseunet.pth"  # trained weights
 os.makedirs(output_dir, exist_ok=True)
 # ------------------- Load Model -------------------
