@@ -123,7 +123,7 @@ class DecoderBlock(nn.Module):
         return x
 # ================= CDAN-DenseUNet =================
 class CDANDenseUNet(nn.Module):
-    def __init__(self, in_channels=3, out_channels=3, base_channels=24, growth_rate=12, output_range="01"):
+    def __init__(self, in_channels=3, out_channels=3, base_channels=32, growth_rate=12, output_range="01"):
         """
         output_range: "01" → outputs in [0,1], use Sigmoid
                       "11" → outputs in [-1,1], use Tanh
