@@ -215,7 +215,7 @@ for epoch in range(num_epochs):
     if avg_val_loss < best_val_loss:
         best_val_loss = avg_val_loss
         patience_counter = 0
-        torch.save(model.state_dict(), 'best_cdan_denseunet.pth')
+        torch.save(model.state_dict(), 'cdan_denseunet.pth')
         print("✔️ Saved best model.")
     else:
         patience_counter += 1
