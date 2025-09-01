@@ -20,7 +20,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = CDANDenseUNet(
     in_channels=3,
     out_channels=3,
-    base_channels=24,      # MUST match your trained model
+    base_channels=32,      # MUST match your trained model
     growth_rate=12,
     output_range="01"      # outputs in [0,1]
 )
