@@ -35,7 +35,7 @@ with torch.no_grad():
         # Load and preprocess
         img_path = os.path.join(input_dir, fname)
         img = Image.open(img_path).convert("RGB")
-        inp = to_tensor(img).unsqueeze(0).to(device)  # shape [8,3,224,224]
+        inp = to_tensor(img).unsqueeze(0).to(device)  # shape [1,3,224,224]
         # Forward pass
         out = model(inp)
         # Clamp output to [0,1]
