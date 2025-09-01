@@ -1,34 +1,51 @@
 # int.py
 import torch
 import torch.nn.functional as F
+import cv2
+import numpy as np
 from cdan_denseunet import CDANDenseUNet   # import your model
+def preprocess_image(image_path, resize_size=(224,224)):
+    """Load and preprocess image for model input"""
+    img = cv2.imread(image_path)
+    if img is None:
+        raise ValueError(f"❌ Could not read image: {image_path}")
+    img = cv2.resize(img, resize_size)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # convert BGR->RGB
+    img = img.astype(np.float32) / 255.0        # normalize to [0,1]
+    img_tensor = torch.from_numpy(img).permute(2,0,1).unsqueeze(0)  # (1,3,H,W)
+    return img_tensor
+def save_output(tensor, save_path):
+    """Convert tensor to image and save"""
+    out_img = tensor.squeeze(0).permute(1,2,0).cpu().numpy()
+    out_img = (out_img * 255.0).clip(0,255).astype(np.uint8)
+    out_img = cv2.cvtColor(out_img, cv2.COLOR_RGB2BGR)  # back to BGR for cv2
+    cv2.imwrite(save_path, out_img)
+    print(f"✅ Saved enhanced image at {save_path}")
 def main():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # ------------------- 1. Initialize model -------------------
-    model = cdan_denseunet(
-        num_classes=2,
-        grl_lambda=1.0,
+    model = CDANDenseUNet(
         in_ch=3,
         out_ch=3,
         growth_rate=12,
         block_layers=(3,4,5),
         base_channels=32,
-        use_cbam_encoder=True,   # or False if you want plain CDAN-UNet
+        use_cbam_encoder=True,
         use_cbam_decoder=True
-    )
-    print("✅ cdan_denseunet model initialized.")
-    # ------------------- 2. Dummy Input -------------------
-    x = torch.randn(8, 3, 224, 224)   # batch_size=8, RGB 224x224 image
-    # ------------------- 3. Forward pass -------------------
-    gen_out, feat_vec = model(x)
-    print(f"Generator output shape: {gen_out.shape}")  # expected (2, 3, 256, 256)
-    print(f"Feature vector shape: {feat_vec.shape}")   # expected (2, feat_dim)
-    # ------------------- 4. Domain Classifier -------------------
-    # Example softmax predictions for CDAN (normally from task head)
-    soft_preds = F.softmax(torch.randn(2, 2), dim=1)
-    domain_logits = model.domain_classify(feat_vec, soft_preds, grl_lambda=0.5)
-    print(f"Domain classifier logits shape: {domain_logits.shape}")  # expected (2,)
-    # ------------------- 5. Save Model Weights -------------------
-    torch.save(model.state_dict(), "cdan_denseunet.pt")
-    print("💾 Model weights saved as cdan_dneseunet.pt")
+    ).to(device)
+    # ------------------- 2. Load trained weights -------------------
+    weight_path = "cdan_denseunet.pth"  # change this to your trained weights
+    model.load_state_dict(torch.load(weight_path, map_location=device))
+    model.eval()
+    print(f"💾 Loaded trained weights from {weight_path}")
+    # ------------------- 3. Load and preprocess input image -------------------
+    input_path = "test.jpg"        # change this to your input image
+    output_path = "enhanced.jpg"   # output path
+    img_tensor = preprocess_image(input_path).to(device)
+    # ------------------- 4. Forward pass -------------------
+    with torch.no_grad():
+        gen_out, feat_vec = model(img_tensor)
+    # ------------------- 5. Save enhanced output -------------------
+    save_output(gen_out, output_path)
 if __name__ == "__main__":
     main()
