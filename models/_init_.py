@@ -29,7 +29,7 @@ def main():
         out_ch=3,
         growth_rate=12,
         block_layers=(3,4,5),
-        base_channels=24,
+        base_channels=32,
         use_cbam_encoder=True,
         use_cbam_decoder=True
     ).to(device)
