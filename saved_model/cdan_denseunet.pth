@@ -1,6 +1,11 @@
 step1: Prepare your environment
 pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 --extra-index-url https://download.pytorch.org/whl/cu117
 pip install lpips numpy Pillow tqdm matplotlib opencv-python scikit-image
+# Add model folder to path
+sys.path.append('/content/CdanDenseUNet')
+from models.cdan_denseunet import CDANDenseUNet
+# Set the device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 step 2: intilaize your model 
 model = CDANDenseUNet(in_channels=3, out_channels=3, base_channels=32, growth_rate=12, output_range="01").to(device)
 step 3 : Load the model parameters
