@@ -3,18 +3,18 @@ import sys
 import torch
 from PIL import Image
 from torchvision import transforms
-from torchvision.transforms import ToTensor, ToPILImage, Resize
+from torchvision.transforms import ToPILImage
 # ------------------- Add model folder -------------------
-# NOTE: Ensure this path is correct for your environment
-sys.path.append('/content/CdanDenseUNet')
+sys.path.append('/content/CdanDenseUNet')  # change to your path
 from models.cdan_denseunet import CDANDenseUNet
 # ------------------- Paths -------------------
 input_dir = "/content/cvccolondbsplit/train/low"     # folder with low-light input images
 output_dir = "/content/outputs/train_enhanced"      # folder to save enhanced images
 model_path = "/content/saved_model/cdan_denseunet.pth"  # trained weights
 os.makedirs(output_dir, exist_ok=True)
-# ------------------- Load Model -------------------
+# ------------------- Device -------------------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# ------------------- Load Model -------------------
 model = CDANDenseUNet(
     in_channels=3,
     out_channels=3,
@@ -31,9 +31,8 @@ except RuntimeError as e:
 model.to(device)
 model.eval()
 # ------------------- Transforms -------------------
-# Assuming your model was trained on 224x224 images
 transform = transforms.Compose([
-    transforms.Resize((224, 224)),
+    transforms.Resize((224, 224)),  # match training
     transforms.ToTensor()
 ])
 to_pil = ToPILImage()  # converts tensor [0-1] -> PIL [0-255]
@@ -45,11 +44,16 @@ with torch.no_grad():
         # Load and preprocess
         img_path = os.path.join(input_dir, fname)
         img = Image.open(img_path).convert("RGB")
-        inp = transform(img).unsqueeze(0).to(device)  # shape [1, 3, 224, 224]
+        inp = transform(img).unsqueeze(0).to(device)  # shape [1,3,224,224]
         # Forward pass
         out = model(inp).squeeze(0).cpu()
-        # Clamp output to [0,1]
+        # Clamp to [0,1]
         out = out.clamp(0, 1)
+        # ------------------- Contrast stretching -------------------
+        min_val = out.min()
+        max_val = out.max()
+        if max_val - min_val > 1e-5:  # avoid division by zero
+            out = (out - min_val) / (max_val - min_val)
         # Convert to PIL and save
         enhanced_img = to_pil(out)
         enhanced_img.save(os.path.join(output_dir, fname))
@@ -59,3 +63,4 @@ with torch.no_grad():
             f"max: {out.max().item():.4f}, "
             f"mean: {out.mean().item():.4f} | Saved ✅"
         )
+print("✅ All images enhanced and saved successfully!")
