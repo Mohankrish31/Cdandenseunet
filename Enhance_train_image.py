@@ -9,7 +9,7 @@ sys.path.append('/content/CdanDenseUNet')  # change to your path
 from models.cdan_denseunet import CDANDenseUNet
 # ------------------- Paths -------------------
 input_dir = "/content/cvccolondbsplit/train/low"     # folder with low-light input images
-output_dir = "/content/outputs/train_enhanced"      # folder to save enhanced images
+output_dir = "/content/outputs/train_enhanced"       # folder to save enhanced images
 model_path = "/content/saved_model/cdan_denseunet.pth"  # trained weights
 os.makedirs(output_dir, exist_ok=True)
 # ------------------- Device -------------------
@@ -35,7 +35,7 @@ transform = transforms.Compose([
     transforms.Resize((224, 224)),  # match training
     transforms.ToTensor()
 ])
-to_pil = ToPILImage()  # converts tensor [0-1] -> PIL [0-255]
+to_pil = ToPILImage()
 # ------------------- Inference Loop -------------------
 with torch.no_grad():
     for fname in os.listdir(input_dir):
@@ -48,19 +48,24 @@ with torch.no_grad():
         # Forward pass
         out = model(inp).squeeze(0).cpu()
         # ------------------- Per-channel contrast stretching -------------------
-        out = out.clone()  # make a copy
+        out = out.clone()
         for c in range(3):  # R, G, B channels
             min_val = out[c].min()
             max_val = out[c].max()
             if max_val - min_val > 1e-5:  # avoid division by zero
                 out[c] = (out[c] - min_val) / (max_val - min_val)
-        out = out.clamp(0, 1)  # ensure range [0,1]
+        out = out.clamp(0, 1)
+        # ------------------- Color balance normalization -------------------
+        r_mean, g_mean, b_mean = out[0].mean().item(), out[1].mean().item(), out[2].mean().item()
+        mean_gray = (r_mean + g_mean + b_mean) / 3.0
+        for c, m in enumerate([r_mean, g_mean, b_mean]):
+            if m > 1e-5:
+                out[c] *= (mean_gray / m)
+        out = out.clamp(0, 1)
         # Convert to PIL and save
         enhanced_img = to_pil(out)
         enhanced_img.save(os.path.join(output_dir, fname))
         # Debug info per channel
         r_mean, g_mean, b_mean = out[0].mean().item(), out[1].mean().item(), out[2].mean().item()
-        print(
-            f"{fname} -> R_mean: {r_mean:.4f}, G_mean: {g_mean:.4f}, B_mean: {b_mean:.4f} | Saved ✅"
-        )
-print("✅ All images enhanced and saved successfully!")
+        print(f"{fname} -> R_mean: {r_mean:.4f}, G_mean: {g_mean:.4f}, B_mean: {b_mean:.4f} | Saved ✅")
+print("✅ All images enhanced, color-balanced, and saved successfully!")
