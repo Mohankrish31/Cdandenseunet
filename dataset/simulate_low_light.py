@@ -4,30 +4,27 @@ import numpy as np
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 import random
-def simulate_endoscopic_degradation(image, brightness_range=(0.5, 0.8), blur_range=(1, 5), noise_level=0.02):
+def simulate_endoscopic_degradation(image, brightness_range=(0.7, 0.9), blur_range=(1, 3), noise_level=0.01):
     """
-    More realistic low-light simulation for colonoscopy images.
-    - Uneven illumination (vignetting) with randomized exponent
-    - Combined motion + Gaussian blur
-    - Low brightness scaling
-    - Poisson-like noise
-    - Slight reddish color cast
+    Realistic yet CONTROLLED low-light simulation for colonoscopy images.
+    Adjusted parameters to avoid 'gray box' outputs while maintaining realism.
     """
     height, width, _ = image.shape
     degraded_image = image.astype(np.float32)
-    # 1. Uneven Illumination (Vignetting)
+    # 1. Uneven Illumination (Vignetting) - MUCH MILDER
     center_x, center_y = width // 2, height // 2
     max_dist = np.sqrt(center_x**2 + center_y**2)
     Y, X = np.ogrid[:height, :width]
     dist_from_center = np.sqrt((X - center_x)**2 + (Y - center_y)**2)
     normalized_dist = dist_from_center / max_dist
-    # Random vignette exponent per image
-    exponent = random.uniform(1.2, 1.8)
+    # Milder vignette exponent
+    exponent = random.uniform(0.8, 1.2)  # Reduced from (1.2, 1.8)
     vignette_mask = 1 - normalized_dist**exponent
     vignette_mask = np.stack([vignette_mask]*3, axis=-1)
-    vignette_scaling = random.uniform(0.5, 0.8)
+    # Higher scaling to keep image brighter
+    vignette_scaling = random.uniform(0.7, 0.9)  # Increased from (0.5, 0.8)
     degraded_image *= vignette_mask * vignette_scaling
-    # 2. Blur: motion + slight Gaussian
+    # 2. Blur: motion + slight Gaussian - LESS BLUR
     blur_amount = random.randint(*blur_range)
     if blur_amount > 1:
         # Motion blur
@@ -48,13 +45,13 @@ def simulate_endoscopic_degradation(image, brightness_range=(0.5, 0.8), blur_ran
         degraded_image = cv2.filter2D(degraded_image, -1, kernel)
         # Slight Gaussian blur for defocus
         degraded_image = cv2.GaussianBlur(degraded_image, (3,3), sigmaX=0.5)
-    # 3. Brightness scaling
-    brightness_factor = random.uniform(*brightness_range)
+    # 3. Brightness scaling - BRIGHTER
+    brightness_factor = random.uniform(*brightness_range) # Now (0.7, 0.9) instead of (0.5, 0.8)
     degraded_image *= brightness_factor
-    # 4. Poisson-like noise (scaled by image intensity)
-    noise = np.random.poisson(degraded_image * noise_level).astype(np.float32)
+    # 4. Poisson-like noise - LESS NOISE
+    noise = np.random.poisson(degraded_image * noise_level).astype(np.float32) # noise_level = 0.01 now
     degraded_image += noise
-    # 5. Slight reddish color cast
+    # 5. Slight reddish color cast (unchanged, as it doesn't cause gray boxes)
     red_scale = random.uniform(1.05, 1.15)
     green_scale = random.uniform(0.95, 1.05)
     blue_scale = random.uniform(0.9, 1.0)
