@@ -49,26 +49,24 @@ with torch.no_grad():
         orig_rgb = cv2.cvtColor(orig_bgr, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(orig_rgb)
 
-        # Forward pass
+        # Forward pass through model
         inp = transform(pil_img).unsqueeze(0).to(device)
         out = model(inp).squeeze(0)  # [3,H,W]
 
-        # Normalize output
+        # Normalize output to [0,1]
         out = (out - out.min()) / (out.max() - out.min() + 1e-8)
         out_np = out.permute(1, 2, 0).cpu().numpy()
         out_uint8 = (out_np * 255).astype(np.uint8)
 
-        # ------------------- Use only L from model -------------------
+        # ------------------- Use model as luminance (L channel) -------------------
         model_gray = cv2.cvtColor(out_uint8, cv2.COLOR_RGB2GRAY)
-
-        # Resize gray map to original size
         model_gray = cv2.resize(model_gray, (orig_rgb.shape[1], orig_rgb.shape[0]))
 
         # Convert original → LAB
         orig_lab = cv2.cvtColor(orig_rgb, cv2.COLOR_RGB2LAB)
         l_orig, a_orig, b_orig = cv2.split(orig_lab)
 
-        # Replace L channel with model’s L
+        # Replace L channel with model output
         merged_lab = cv2.merge((model_gray, a_orig, b_orig))
         enhanced = cv2.cvtColor(merged_lab, cv2.COLOR_LAB2BGR)
 
@@ -79,7 +77,7 @@ with torch.no_grad():
         # CLAHE
         lab = cv2.cvtColor(denoised, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         cl = clahe.apply(l)
         limg = cv2.merge((cl, a, b))
         clahe_rgb = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
