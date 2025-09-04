@@ -1,6 +1,8 @@
 import os
 import sys
 import torch
+import cv2
+import numpy as np
 from PIL import Image
 from torchvision import transforms
 from torchvision.transforms import ToPILImage
@@ -31,7 +33,7 @@ try:
     print("✅ Model loaded successfully.")
 except RuntimeError as e:
     print(f"Error loading model state dict: {e}")
-    sys.exit(1)  # Exit if model can't be loaded
+    sys.exit(1)
 
 model.to(device)
 model.eval()
@@ -42,6 +44,25 @@ transform = transforms.Compose([
     transforms.ToTensor()
 ])
 to_pil = ToPILImage()
+
+# ------------------- Normalization helper -------------------
+def normalize_and_balance(img_np):
+    """
+    img_np: numpy image in [0,1], shape (H, W, 3), RGB
+    - Normalizes to min=0, max=1
+    - Adjusts per-channel mean to ~0.5
+    """
+    # Step 1: min-max normalize
+    img_np = (img_np - img_np.min()) / (img_np.max() - img_np.min() + 1e-8)
+
+    # Step 2: adjust channel mean toward 0.5
+    for c in range(3):
+        mean_c = img_np[..., c].mean()
+        if mean_c > 1e-5:
+            scale = 0.5 / (mean_c + 1e-8)
+            img_np[..., c] = np.clip(img_np[..., c] * scale, 0, 1)
+
+    return img_np
 
 # ------------------- Inference Loop -------------------
 with torch.no_grad():
@@ -58,32 +79,21 @@ with torch.no_grad():
         out = model(inp).squeeze(0).cpu()
 
         # ---------- Output range check ----------
-        y = out.clone()
-        print(f"{fname} → Range check → min={y.min().item():.4f}, max={y.max().item():.4f}, mean={y.mean().item():.4f}")
+        print(f"{fname} → Range check → min={out.min().item():.4f}, max={out.max().item():.4f}, mean={out.mean().item():.4f}")
 
-        # ------------------- Per-channel contrast stretching -------------------
-        out = out.clone()
-        for c in range(3):  # R, G, B channels
-            min_val = out[c].min()
-            max_val = out[c].max()
-            if max_val - min_val > 1e-5:  # avoid division by zero
-                out[c] = (out[c] - min_val) / (max_val - min_val)
-        out = out.clamp(0, 1)
+        # Convert tensor → numpy for normalization
+        out_np = out.permute(1, 2, 0).numpy()  # shape (H, W, 3), still in [0,1]
 
-        # ------------------- Color balance normalization -------------------
-        r_mean, g_mean, b_mean = out[0].mean().item(), out[1].mean().item(), out[2].mean().item()
-        mean_gray = (r_mean + g_mean + b_mean) / 3.0
-        for c, m in enumerate([r_mean, g_mean, b_mean]):
-            if m > 1e-5:
-                out[c] *= (mean_gray / m)
-        out = out.clamp(0, 1)
+        # Apply normalization and channel balancing
+        out_np = normalize_and_balance(out_np)
 
-        # Convert to PIL and save
-        enhanced_img = to_pil(out)
-        enhanced_img.save(os.path.join(output_dir, fname))
+        # Save result
+        out_uint8 = (out_np * 255).astype(np.uint8)
+        out_bgr = cv2.cvtColor(out_uint8, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(os.path.join(output_dir, fname), out_bgr)
 
         # Debug info per channel
-        r_mean, g_mean, b_mean = out[0].mean().item(), out[1].mean().item(), out[2].mean().item()
+        r_mean, g_mean, b_mean = out_np[..., 0].mean(), out_np[..., 1].mean(), out_np[..., 2].mean()
         print(f"{fname} -> R_mean: {r_mean:.4f}, G_mean: {g_mean:.4f}, B_mean: {b_mean:.4f} | Saved ✅")
 
-print("✅ All images enhanced, color-balanced, and saved successfully!")
+print("✅ All images enhanced, normalized, and saved successfully!")
