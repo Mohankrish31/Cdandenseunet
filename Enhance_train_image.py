@@ -25,7 +25,7 @@ model = CDANDenseUNet(
     out_channels=3,
     base_channels=32,
     growth_rate=12,
-    output_range="01"   # ensures outputs in [0,1]
+    output_range="01"
 )
 model.load_state_dict(torch.load(model_path, map_location=device))
 model.to(device)
@@ -37,34 +37,40 @@ transform = transforms.Compose([
     transforms.ToTensor()
 ])
 
-# ------------------- Inference (No Post-processing) -------------------
+# ------------------- Consistent Inference -------------------
 with torch.no_grad():
     for fname in os.listdir(input_dir):
         if not fname.lower().endswith((".png", ".jpg", ".jpeg")):
             continue
 
-        # Load original image
+        # Load image (CONSISTENT with Program 1)
         img_path = os.path.join(input_dir, fname)
-        orig_bgr = cv2.imread(img_path)
-        orig_rgb = cv2.cvtColor(orig_bgr, cv2.COLOR_BGR2RGB)
-        pil_img = Image.fromarray(orig_rgb)
-
+        pil_img = Image.open(img_path).convert("RGB")  # ✅ Consistent loading
+        
+        # Get original size for resizing back
+        original_size = pil_img.size  # (width, height)
+        
         # Forward pass through model
         inp = transform(pil_img).unsqueeze(0).to(device)
-        out = model(inp).squeeze(0)  # [3,H,W]
-
-        # Clamp & convert to numpy
+        out = model(inp).squeeze(0)  # [3, H, W]
+        
+        # Clamp to valid range
         out = out.clamp(0, 1)  
-        out_np = out.permute(1, 2, 0).cpu().numpy()
-
-        # Resize back to original size
-        out_resized = cv2.resize((out_np * 255).astype(np.uint8),
-                                 (orig_rgb.shape[1], orig_rgb.shape[0]))
-
-        # Save result (RGB → BGR for OpenCV)
+        
+        # Convert to numpy and scale to 0-255
+        out_np = out.permute(1, 2, 0).cpu().numpy()  # [H, W, 3]
+        out_uint8 = (out_np * 255).astype(np.uint8)
+        
+        # Resize back to original dimensions
+        out_resized = cv2.resize(out_uint8, original_size, interpolation=cv2.INTER_LANCZOS4)
+        
+        # Convert RGB to BGR for OpenCV saving
+        out_bgr = cv2.cvtColor(out_resized, cv2.COLOR_RGB2BGR)
+        
+        # Save result
         save_path = os.path.join(output_dir, fname)
-        cv2.imwrite(save_path, cv2.cvtColor(out_resized, cv2.COLOR_RGB2BGR))
+        cv2.imwrite(save_path, out_bgr)
 
-        print(f"✅ Saved {save_path} (direct model output, no post-processing)")
+        print(f"✅ Saved {save_path}")
 
-print("🎯 All images enhanced and saved directly from model output!")
+print("🎯 All images processed successfully!")
