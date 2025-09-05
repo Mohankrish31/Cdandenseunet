@@ -4,6 +4,7 @@ import numpy as np
 from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 import random
+from PIL import Image
 def simulate_endoscopic_degradation(image, brightness_range=(0.7, 0.9), blur_range=(1, 3), noise_level=0.01):
     """
     Realistic yet CONTROLLED low-light simulation for colonoscopy images.
@@ -17,17 +18,14 @@ def simulate_endoscopic_degradation(image, brightness_range=(0.7, 0.9), blur_ran
     Y, X = np.ogrid[:height, :width]
     dist_from_center = np.sqrt((X - center_x)**2 + (Y - center_y)**2)
     normalized_dist = dist_from_center / max_dist
-    # Milder vignette exponent
     exponent = random.uniform(0.8, 1.2)  # Reduced from (1.2, 1.8)
     vignette_mask = 1 - normalized_dist**exponent
     vignette_mask = np.stack([vignette_mask]*3, axis=-1)
-    # Higher scaling to keep image brighter
     vignette_scaling = random.uniform(0.7, 0.9)  # Increased from (0.5, 0.8)
     degraded_image *= vignette_mask * vignette_scaling
     # 2. Blur: motion + slight Gaussian - LESS BLUR
     blur_amount = random.randint(*blur_range)
     if blur_amount > 1:
-        # Motion blur
         kernel_size = blur_amount
         kernel = np.zeros((kernel_size, kernel_size), dtype=np.float32)
         angle = random.choice([0, 45, 90, 135])
@@ -43,15 +41,14 @@ def simulate_endoscopic_degradation(image, brightness_range=(0.7, 0.9), blur_ran
                 kernel[i, i] = 1
         kernel /= kernel.sum()
         degraded_image = cv2.filter2D(degraded_image, -1, kernel)
-        # Slight Gaussian blur for defocus
         degraded_image = cv2.GaussianBlur(degraded_image, (3,3), sigmaX=0.5)
     # 3. Brightness scaling - BRIGHTER
-    brightness_factor = random.uniform(*brightness_range) # Now (0.7, 0.9) instead of (0.5, 0.8)
+    brightness_factor = random.uniform(*brightness_range)
     degraded_image *= brightness_factor
     # 4. Poisson-like noise - LESS NOISE
-    noise = np.random.poisson(degraded_image * noise_level).astype(np.float32) # noise_level = 0.01 now
+    noise = np.random.poisson(degraded_image * noise_level).astype(np.float32)
     degraded_image += noise
-    # 5. Slight reddish color cast (unchanged, as it doesn't cause gray boxes)
+    # 5. Slight reddish color cast
     red_scale = random.uniform(1.05, 1.15)
     green_scale = random.uniform(0.95, 1.05)
     blue_scale = random.uniform(0.9, 1.0)
@@ -64,7 +61,7 @@ def simulate_endoscopic_degradation(image, brightness_range=(0.7, 0.9), blur_ran
 def prepare_dataset(input_dir, output_dir, val_ratio=0.1, test_ratio=0.2, resize_size=(224, 224)):
     """
     Prepares a low-light dataset by splitting a directory of high-res images
-    and applying a custom degradation function.
+    and applying a custom degradation function. Saves images in RGB format.
     """
     image_list = [f for f in os.listdir(input_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
     image_list.sort()
@@ -88,9 +85,12 @@ def prepare_dataset(input_dir, output_dir, val_ratio=0.1, test_ratio=0.2, resize
                 continue
             image = cv2.resize(image, resize_size)
             degraded_img = simulate_endoscopic_degradation(image)
-            cv2.imwrite(os.path.join(high_dir, fname), image)
-            cv2.imwrite(os.path.join(low_dir, fname), degraded_img)
-    print("\n✅ Dataset preparation complete.")
+            # ✅ Save in RGB format instead of BGR
+            rgb_high = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            rgb_low = cv2.cvtColor(degraded_img, cv2.COLOR_BGR2RGB)
+            Image.fromarray(rgb_high).save(os.path.join(high_dir, fname))
+            Image.fromarray(rgb_low).save(os.path.join(low_dir, fname))
+    print("\n✅ Dataset preparation complete. (Images saved in RGB format)")
 if __name__ == "__main__":
     original_dataset_path = "/content/cvccolondb/data/train/images"
     output_dataset_path = "/content/cvccolondbsplit"
