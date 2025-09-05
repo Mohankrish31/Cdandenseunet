@@ -5,57 +5,56 @@ from tqdm import tqdm
 from sklearn.model_selection import train_test_split
 import random
 from PIL import Image
-def simulate_endoscopic_degradation(image, brightness_range=(0.7, 0.9), blur_range=(1, 3), noise_level=0.01):
+def simulate_endoscopic_degradation(image, brightness_range=(0.85, 0.95), gaussian_blur_sigma=0.8, noise_level=0.005):
     """
     Realistic yet CONTROLLED low-light simulation for colonoscopy images.
-    Adjusted parameters to avoid 'gray box' outputs while maintaining realism.
+    Parameters are tuned to avoid black outputs while maintaining realism.
+    Simplified by removing artificial motion blur kernel.
     """
     height, width, _ = image.shape
-    degraded_image = image.astype(np.float32)
-    # 1. Uneven Illumination (Vignetting) - MUCH MILDER
+    degraded_image = image.astype(np.float32) # Convert to float for operations
+
+    # 1. MUCH MILDER Vignetting (The MAIN CULPRIT)
     center_x, center_y = width // 2, height // 2
     max_dist = np.sqrt(center_x**2 + center_y**2)
     Y, X = np.ogrid[:height, :width]
     dist_from_center = np.sqrt((X - center_x)**2 + (Y - center_y)**2)
     normalized_dist = dist_from_center / max_dist
-    exponent = random.uniform(0.8, 1.2)  # Reduced from (1.2, 1.8)
-    vignette_mask = 1 - normalized_dist**exponent
+    
+    # Use a much smaller exponent for a gentler falloff
+    exponent = random.uniform(0.5, 0.8)
+    vignette_mask = 1 - (normalized_dist**exponent * 0.4)  # Only reduce corners by max 40%
     vignette_mask = np.stack([vignette_mask]*3, axis=-1)
-    vignette_scaling = random.uniform(0.7, 0.9)  # Increased from (0.5, 0.8)
-    degraded_image *= vignette_mask * vignette_scaling
-    # 2. Blur: motion + slight Gaussian - LESS BLUR
-    blur_amount = random.randint(*blur_range)
-    if blur_amount > 1:
-        kernel_size = blur_amount
-        kernel = np.zeros((kernel_size, kernel_size), dtype=np.float32)
-        angle = random.choice([0, 45, 90, 135])
-        if angle == 0:
-            kernel[kernel_size//2, :] = 1
-        elif angle == 45:
-            for i in range(kernel_size):
-                kernel[i, kernel_size - 1 - i] = 1
-        elif angle == 90:
-            kernel[:, kernel_size//2] = 1
-        else:  # 135 degrees
-            for i in range(kernel_size):
-                kernel[i, i] = 1
-        kernel /= kernel.sum()
-        degraded_image = cv2.filter2D(degraded_image, -1, kernel)
-        degraded_image = cv2.GaussianBlur(degraded_image, (3,3), sigmaX=0.5)
-    # 3. Brightness scaling - BRIGHTER
+    
+    # Apply the gentle vignette
+    degraded_image *= vignette_mask
+
+    # 2. Brightness Scaling - Apply LESS reduction
     brightness_factor = random.uniform(*brightness_range)
     degraded_image *= brightness_factor
-    # 4. Poisson-like noise - LESS NOISE
+
+    # 3. BLUR: ONLY Gaussian Blur for softness and mild motion effect
+    # Removed the artificial motion blur kernel. Gaussian blur is more natural.
+    if gaussian_blur_sigma > 0:
+        kernel_size = 3  # Keep kernel small to avoid excessive blurring
+        # Ensure kernel size is odd
+        kernel_size = kernel_size + 1 if kernel_size % 2 == 0 else kernel_size
+        degraded_image = cv2.GaussianBlur(degraded_image, (kernel_size, kernel_size), sigmaX=gaussian_blur_sigma)
+
+    # 4. SMALL Amount of Noise
     noise = np.random.poisson(degraded_image * noise_level).astype(np.float32)
     degraded_image += noise
-    # 5. Slight reddish color cast
-    red_scale = random.uniform(1.05, 1.15)
-    green_scale = random.uniform(0.95, 1.05)
-    blue_scale = random.uniform(0.9, 1.0)
-    degraded_image[..., 0] *= blue_scale
-    degraded_image[..., 1] *= green_scale
-    degraded_image[..., 2] *= red_scale
-    # Clip and convert to uint8
+
+    # 5. Slight Color Cast
+    red_scale = random.uniform(1.03, 1.10)
+    green_scale = random.uniform(0.97, 1.03)
+    blue_scale = random.uniform(0.94, 0.98)
+
+    degraded_image[..., 0] *= blue_scale   # Blue channel
+    degraded_image[..., 1] *= green_scale  # Green channel
+    degraded_image[..., 2] *= red_scale    # Red channel
+
+    # Clip and convert back to uint8
     degraded_image = np.clip(degraded_image, 0, 255).astype(np.uint8)
     return degraded_image
 def prepare_dataset(input_dir, output_dir, val_ratio=0.1, test_ratio=0.2, resize_size=(224, 224)):
