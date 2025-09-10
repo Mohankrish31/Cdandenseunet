@@ -18,7 +18,7 @@ Dataset: CVC-ColonDB
 
 Training & Validation Resolution: 224×224
 
-Testing Resolution: Original dimensions (e.g., 574×500)
+Testing Resolution: 224x224
 
 Augmentations: Random crop, flip, rotation
 
