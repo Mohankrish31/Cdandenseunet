@@ -1,42 +1,60 @@
-step1: Prepare your environment
-pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 --extra-index-url https://download.pytorch.org/whl/cu117
-pip install lpips numpy Pillow tqdm matplotlib opencv-python scikit-image
+# Step 1: Prepare your environment
+# (already installed packages and imports)
+import sys
+import torch
+from PIL import Image
+from torchvision import transforms
+
 # Add model folder to path
 sys.path.append('/content/CdanDenseUNet')
 from models.cdan_denseunet import CDANDenseUNet
+
 # Set the device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-step 2: intilaize your model 
-model = CDANDenseUNet(in_channels=3, out_channels=3, base_channels=32, growth_rate=12, output_range="01").to(device)
-step 3 : Load the model parameters
+
+# Step 2: Initialize your model
+model = CDANDenseUNet(
+    in_channels=3,
+    out_channels=3,
+    base_channels=32,
+    growth_rate=12,
+    output_range="01"
+).to(device)
+
+# Step 3: Load the model parameters
 model_path = 'cdan_denseunet.pth'
 model.load_state_dict(torch.load(model_path, map_location=device))
-step 4:  Set the model to evaluation mode 
+
+# Step 4: Set the model to evaluation mode
 model.eval()
 print("Model loaded successfully. ✅")
-step 5: make predictions on new image
-# Define the transformations
+
+# Step 5: Make predictions on a new image
+# ✅ Removed Resize, only keep ToTensor()
 transform = transforms.Compose([
-    transforms.Resize((224, 224)),
     transforms.ToTensor()
 ])
+
 # Load and preprocess a new image
 image_path = 'path/to/your/new_image.jpg'
 try:
     input_image = Image.open(image_path).convert("RGB")
-    input_tensor = transform(input_image).unsqueeze(0).to(device) 
-    print("Image preprocessed. 🖼️")
+    input_tensor = transform(input_image).unsqueeze(0).to(device)  # [1, 3, H, W]
+    print(f"Image preprocessed. 🖼️ Original size: {input_image.size}")
 except FileNotFoundError:
     print(f"Error: Image not found at {image_path}. Please check the path.")
     exit()
-step 6: Intrepret the output
+
+# Step 6: Interpret the output
 # Perform the forward pass to get the prediction
 with torch.no_grad():
     prediction = model(input_tensor)
+
 # Convert the output tensor to a PIL Image
-# The prediction tensor has shape (1, 3, 224, 224)
+# Shape: (1, 3, H, W) → (3, H, W)
 output_tensor = prediction.squeeze(0).cpu().clamp(0, 1)
 output_image = transforms.ToPILImage()(output_tensor)
+
 # Save the predicted image
 output_image.save("predicted_image.png")
 print("Prediction saved as predicted_image.png. ✨")
