@@ -21,7 +21,7 @@ model = CDANDenseUNet(
 ).to(device)
 
 # Step 3: Load the model parameters
-model_path = 'cdan_denseunet.pth'
+model_path = '/content/saved_model/cdan_denseunet.pth'
 model.load_state_dict(torch.load(model_path, map_location=device))
 
 # Step 4: Set the model to evaluation mode
