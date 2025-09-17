@@ -1,5 +1,4 @@
 # Step 1: Prepare your environment
-# (already installed packages and imports)
 import sys
 import torch
 from PIL import Image
@@ -30,8 +29,9 @@ model.eval()
 print("Model loaded successfully. ✅")
 
 # Step 5: Make predictions on a new image
-# ✅ Removed Resize, only keep ToTensor()
+# ✅ Added Resize(224, 224)
 transform = transforms.Compose([
+    transforms.Resize((224, 224)),   # Resize before tensor conversion
     transforms.ToTensor()
 ])
 
@@ -39,8 +39,8 @@ transform = transforms.Compose([
 image_path = 'path/to/your/new_image.jpg'
 try:
     input_image = Image.open(image_path).convert("RGB")
-    input_tensor = transform(input_image).unsqueeze(0).to(device)  # [1, 3, H, W]
-    print(f"Image preprocessed. 🖼️ Original size: {input_image.size}")
+    input_tensor = transform(input_image).unsqueeze(0).to(device)  # [1, 3, 224, 224]
+    print(f"Image preprocessed. 🖼️ Resized to: {input_tensor.shape[2:]} (H, W)")
 except FileNotFoundError:
     print(f"Error: Image not found at {image_path}. Please check the path.")
     exit()
@@ -51,7 +51,7 @@ with torch.no_grad():
     prediction = model(input_tensor)
 
 # Convert the output tensor to a PIL Image
-# Shape: (1, 3, H, W) → (3, H, W)
+# Shape: (1, 3, 224, 224) → (3, 224, 224)
 output_tensor = prediction.squeeze(0).cpu().clamp(0, 1)
 output_image = transforms.ToPILImage()(output_tensor)
 
