@@ -31,8 +31,10 @@ model.load_state_dict(torch.load(model_path, map_location=device))
 model.to(device)
 model.eval()
 
-# ------------------- Transforms (NO resize) -------------------
+# ------------------- Transforms (WITH resize 224x224) -------------------
+resize_dim = (224, 224)
 transform = transforms.Compose([
+    transforms.Resize(resize_dim),  # Resize before tensor conversion
     transforms.ToTensor()
 ])
 
@@ -46,9 +48,11 @@ with torch.no_grad():
         img_path = os.path.join(input_dir, fname)
         pil_img = Image.open(img_path).convert("RGB")
 
+        # Resize + convert to tensor
+        inp = transform(pil_img).unsqueeze(0).to(device)  # [1, 3, 224, 224]
+
         # Forward pass
-        inp = transform(pil_img).unsqueeze(0).to(device)  # [1, 3, H, W]
-        out = model(inp).squeeze(0)  # [3, H, W]
+        out = model(inp).squeeze(0)  # [3, 224, 224]
 
         # Clamp to valid range
         out = out.clamp(0, 1)
@@ -66,4 +70,4 @@ with torch.no_grad():
 
         print(f"✅ Saved {save_path}")
 
-print("🎯 All images processed successfully at ORIGINAL size!")
+print("🎯 All images processed successfully at 224x224!")
