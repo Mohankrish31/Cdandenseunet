@@ -37,7 +37,7 @@ transform = transforms.Compose([
     transforms.ToTensor()
 ])
 # === Paths (example usage) ===
-train_high_dir = "/content//cvccolondbsplit/train/high"
+train_high_dir = "/content/cvccolondbsplit/train/high"
 train_low_dir = "/content/cvccolondbsplit/train/low"
 val_enhanced_dir = "/content//cvccolondbsplit/train/high"
 val_low_dir = "/content/cvccolondbsplit/val/low"
