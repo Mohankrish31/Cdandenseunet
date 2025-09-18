@@ -39,11 +39,11 @@ transform = transforms.Compose([
 # === Paths (example usage) ===
 train_high_dir = "/content/cvccolondbsplit/train/high"
 train_low_dir = "/content/cvccolondbsplit/train/low"
-val_enhanced_dir = "/content//cvccolondbsplit/train/high"
+val_high_dir = "/content//cvccolondbsplit/train/high"
 val_low_dir = "/content/cvccolondbsplit/val/low"
 # === Create Dataset Instances ===
-train_dataset = cvccolondbsplitDataset(train_high_dir, train_low_dir, transform=transform)
-val_dataset = cvccolondbsplitDataset(val_high_dir, val_low_dir, transform=transform)
+train_dataset = cvccolondbsplitDataset(train_low_dir, train_high_dir, transform=transform)
+val_dataset = cvccolondbsplitDataset(val_low_dir, val_high_dir, transform=transform)
 # === Create DataLoaders ===
 batch_size = 8
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
