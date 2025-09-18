@@ -53,6 +53,8 @@ with torch.no_grad():
 
         # Forward pass
         out = model(inp).squeeze(0)  # [3, 224, 224]
+        print("Output min/max:", out.min().item(), out.max().item())
+
 
         # Clamp to valid range
         out = out.clamp(0, 1)
