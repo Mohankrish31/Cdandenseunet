@@ -7,8 +7,59 @@ from PIL import Image
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-import lpips  # Make sure to install: pip install lpips
+import lpips
 from models.cdan_denseunet import CDANDenseUNet
+# ---------- Custom Loss Functions (YOU NEED TO DEFINE THESE) ----------
+class SobelEdgeLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+        self.sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+    def forward(self, pred, target):
+        self.sobel_x = self.sobel_x.to(pred.device)
+        self.sobel_y = self.sobel_y.to(pred.device)
+        pred_edge_x = torch.abs(nn.functional.conv2d(pred, self.sobel_x.repeat(3, 1, 1, 1), padding=1, groups=3))
+        pred_edge_y = torch.abs(nn.functional.conv2d(pred, self.sobel_y.repeat(3, 1, 1, 1), padding=1, groups=3))
+        pred_edge = (pred_edge_x + pred_edge_y).mean()
+        target_edge_x = torch.abs(nn.functional.conv2d(target, self.sobel_x.repeat(3, 1, 1, 1), padding=1, groups=3))
+        target_edge_y = torch.abs(nn.functional.conv2d(target, self.sobel_y.repeat(3, 1, 1, 1), padding=1, groups=3))
+        target_edge = (target_edge_x + target_edge_y).mean()
+        return torch.abs(pred_edge - target_edge)
+class SSIMLoss(nn.Module):
+    def __init__(self, window_size=11, size_average=True):
+        super().__init__()
+        self.window_size = window_size
+        self.size_average = size_average
+        self.channel = 3
+        self.window = self.create_window(window_size, self.channel)
+    def create_window(self, window_size, channel):
+        def gaussian(window_size, sigma):
+            gauss = torch.exp(-(torch.arange(window_size).float() - window_size//2)**2/(2*sigma**2))
+            return gauss/gauss.sum()
+        _1D_window = gaussian(window_size, 1.5).unsqueeze(1)
+        _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
+        window = _2D_window.expand(channel, 1, window_size, window_size).contiguous()
+        return window
+    def forward(self, img1, img2):
+        (_, channel, _, _) = img1.size() 
+        if channel == self.channel and self.window.dtype == img1.dtype:
+            window = self.window.to(img1.device)
+        else:
+            window = self.create_window(self.window_size, channel).to(img1.device).type(img1.dtype)
+            self.window = window
+            self.channel = channel 
+        mu1 = nn.functional.conv2d(img1, window, padding=self.window_size//2, groups=channel)
+        mu2 = nn.functional.conv2d(img2, window, padding=self.window_size//2, groups=channel)
+        mu1_sq = mu1.pow(2)
+        mu2_sq = mu2.pow(2)
+        mu1_mu2 = mu1 * mu2
+        sigma1_sq = nn.functional.conv2d(img1*img1, window, padding=self.window_size//2, groups=channel) - mu1_sq
+        sigma2_sq = nn.functional.conv2d(img2*img2, window, padding=self.window_size//2, groups=channel) - mu2_sq
+        sigma12 = nn.functional.conv2d(img1*img2, window, padding=self.window_size//2, groups=channel) - mu1_mu2
+        C1 = 0.01**2
+        C2 = 0.03**2 
+        ssim_map = ((2*mu1_mu2 + C1)*(2*sigma12 + C2))/((mu1_sq + mu2_sq + C1)*(sigma1_sq + sigma2_sq + C2))
+        return 1 - ssim_map.mean()
 # ---------- Dataset ----------
 class cvccolondbsplitDataset(Dataset):
     def __init__(self, low_dir, high_dir, transform=None):
@@ -27,20 +78,16 @@ class cvccolondbsplitDataset(Dataset):
             low_img = self.transform(low_img)
             high_img = self.transform(high_img)
         return low_img, high_img
-# ---------- Loss utilities (use your existing functions) ----------
-mse_loss_fn = nn.MSELoss()
-# edge_loss_fn, ssim_loss_fn, total_loss_fn assumed identical to yours (reuse)
-# lpips model:
-lpips_model = lpips.LPIPS(net='vgg').to(device)
-# ---------- Loss Functions ----------
-def compute_losses(pred, target):
-    # pred, target in [0,1]
-    mse   = mse_loss_fn(pred, target)
-    edge  = edge_loss_fn(pred, target)              # using your SobelEdgeLoss
-    lp    = lpips_model(2*pred - 1, 2*target - 1).mean()  # lpips expects [-1,1]
-    ssim  = ssim_loss_fn(pred, target)               # your SSIMLoss
-    total = w_mse*mse + w_lpips*lp + w_edge*edge + w_ssim*ssim
-    return total, mse, lp, edge, ssim
+# ---------- Loss Function ----------
+def compute_losses(pred, target, mse_loss_fn, edge_loss_fn, ssim_loss_fn, lpips_model, 
+                  w_mse=1.0, w_lpips=0.1, w_edge=0.1, w_ssim=0.1):
+    """Calculate combined loss function"""
+    mse = mse_loss_fn(pred, target)
+    edge = edge_loss_fn(pred, target)
+    lp = lpips_model(2*pred - 1, 2*target - 1).mean()  # LPIPS expects [-1, 1]
+    ssim = ssim_loss_fn(pred, target) 
+    total = w_mse * mse + w_lpips * lp + w_edge * edge + w_ssim * ssim
+    return total, mse.item(), lp.item(), edge.item(), ssim.item()
 def plot_loss_curve(train_losses, val_losses):
     """Plot training and validation loss curves"""
     plt.figure(figsize=(10, 5))
@@ -55,12 +102,17 @@ def plot_loss_curve(train_losses, val_losses):
     plt.show()
 # ==================== TRAINING SETUP ====================
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# Hyperparameters (YOU NEED TO SET THESE)
+# Hyperparameters
 learning_rate = 0.001
 weight_decay = 1e-5
 num_epochs = 100
 early_stopping_patience = 10
 batch_size = 8
+# Loss weights
+w_mse = 1.0
+w_lpips = 0.1
+w_edge = 0.1
+w_ssim = 0.1
 # Transformations
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
@@ -76,10 +128,14 @@ train_dataset = cvccolondbsplitDataset(train_low_dir, train_high_dir, transform=
 val_dataset = cvccolondbsplitDataset(val_low_dir, val_high_dir, transform=transform)
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-# Initialize model, optimizer, and LPIPS
+# Initialize model, loss functions, and optimizer
 model = CDANDenseUNet(in_channels=3, out_channels=3, base_channels=32, growth_rate=12, output_range="01").to(device)
-optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+# Initialize loss functions
+mse_loss_fn = nn.MSELoss()
+edge_loss_fn = SobelEdgeLoss()
+ssim_loss_fn = SSIMLoss()
 lpips_model = lpips.LPIPS(net='vgg').to(device)
+optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 # Training loop
 best_val_loss = float('inf')
 patience_counter = 0
@@ -95,12 +151,18 @@ for epoch in range(num_epochs):
         target_img = target_img.to(device)
         optimizer.zero_grad()
         pred = model(input_img)
-        total_loss, mse_val, lp_val, edge_val, ssim_val = compute_losses(pred, target_img)
+        total_loss, mse_val, lp_val, edge_val, ssim_val = compute_losses(
+            pred, target_img, mse_loss_fn, edge_loss_fn, ssim_loss_fn, lpips_model,
+            w_mse, w_lpips, w_edge, w_ssim
+        )
         total_loss.backward()
         optimizer.step()
+        
         running_loss += total_loss.item()
+    
     avg_train_loss = running_loss / len(train_loader)
     train_losses.append(avg_train_loss)
+    
     # Validation
     model.eval()
     val_running = 0.0
@@ -109,11 +171,17 @@ for epoch in range(num_epochs):
             input_img = input_img.to(device)
             target_img = target_img.to(device)
             pred = model(input_img)
-            total_loss, _, _, _, _ = compute_losses(pred, target_img)
+            total_loss, _, _, _, _ = compute_losses(
+                pred, target_img, mse_loss_fn, edge_loss_fn, ssim_loss_fn, lpips_model,
+                w_mse, w_lpips, w_edge, w_ssim
+            )
             val_running += total_loss.item()
+    
     avg_val_loss = val_running / len(val_loader)
     val_losses.append(avg_val_loss)
+    
     print(f"Epoch {epoch+1}/{num_epochs}  TrainLoss: {avg_train_loss:.6f}  ValLoss: {avg_val_loss:.6f}")
+    
     # Save best model
     if avg_val_loss < best_val_loss:
         best_val_loss = avg_val_loss
@@ -125,6 +193,7 @@ for epoch in range(num_epochs):
         if patience_counter >= early_stopping_patience:
             print("🛑 Early stopping triggered")
             break
+
 # Plot results
 plot_loss_curve(train_losses, val_losses)
 print("Training completed!")
