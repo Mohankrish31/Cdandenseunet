@@ -18,7 +18,7 @@ early_stopping_patience = 10
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ---------- Dataset (clear names) ----------
-class CVCCDataset(Dataset):
+class cvccolondbsplitDataset(Dataset):
     def __init__(self, low_dir, high_dir, transform=None):
         self.low_dir = low_dir
         self.high_dir = high_dir
@@ -55,8 +55,8 @@ transform = transforms.Compose([
     transforms.ToTensor()
 ])
 
-train_dataset = CVCCDataset(train_low_dir, train_high_dir, transform)
-val_dataset   = CVCCDataset(val_low_dir, val_high_dir, transform)
+train_dataset = cvccolondbsplit(train_low_dir, train_high_dir, transform)
+val_dataset   = cvccolondbsplit(val_low_dir, val_high_dir, transform)
 train_loader  = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
 val_loader    = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True)
 
