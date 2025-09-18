@@ -33,6 +33,70 @@ transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
 ])
+# === Paths ===
+train_high_dir = "/content/cvccolondbsplit/train/high"
+train_low_dir = "/content/cvccolondbsplit/train/low"
+val_high_dir = "/content/cvccolondbsplit/val/high"
+val_low_dir = "/content/cvccolondbsplit/val/low"
 # === Create Dataset Instances ===
 train_dataset =cvccolondbsplitDataset(train_low_dir, train_high_dir,transform=transform)
 val_dataset = cvccolondbsplitDataset(val_low_dir, val_high_dir, transform=transform)
+# === Create DataLoaders ===
+batch_size = 8
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+# Initialize model
+# ---------- Model and optimizer ----------
+model = CDANDenseUNet(in_channels=3, out_channels=3, base_channels=32, growth_rate=12, output_range="01").to(device)
+optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+# ---------- Loss utilities (use your existing functions) ----------
+mse_loss_fn = nn.MSELoss()
+# edge_loss_fn, ssim_loss_fn, total_loss_fn assumed identical to yours (reuse)
+# lpips model:
+lpips_model = lpips.LPIPS(net='vgg').to(device)
+# ---------- Training loop (fixed: forward pass included) ----------
+best_val_loss = float('inf')
+patience_counter = 0
+train_losses = []
+val_losses = []
+for epoch in range(num_epochs):
+    model.train()
+    running_loss = 0.0
+    for input_img, target_img in train_loader:
+        input_img = input_img.to(device)
+        target_img = target_img.to(device)
+        optimizer.zero_grad()
+        pred = model(input_img)                       # <-- IMPORTANT: forward pass
+        total_loss, mse_val, lp_val, edge_val, ssim_val = compute_losses(pred, target_img)
+        total_loss.backward()
+        optimizer.step()
+        running_loss += total_loss.item()
+    avg_train_loss = running_loss / len(train_loader)
+    train_losses.append(avg_train_loss)
+ # Validation
+    model.eval()
+    val_running = 0.0
+    with torch.no_grad():
+        for input_img, target_img in val_loader:
+            input_img = input_img.to(device)
+            target_img = target_img.to(device)
+            pred = model(input_img)
+            total_loss, _, _, _, _ = compute_losses(pred, target_img)
+            val_running += total_loss.item()
+
+    avg_val_loss = val_running / len(val_loader)
+    val_losses.append(avg_val_loss)
+    print(f"Epoch {epoch+1}/{num_epochs}  TrainLoss: {avg_train_loss:.6f}  ValLoss: {avg_val_loss:.6f}")
+    # Save best
+    if avg_val_loss < best_val_loss:
+        best_val_loss = avg_val_loss
+        patience_counter = 0
+        torch.save(model.state_dict(), 'best_cdan_denseunet.pth')
+        print("Saved best model.")
+    else:
+        patience_counter += 1
+        if patience_counter >= early_stopping_patience:
+            print("Early stopping")
+            break
+# Plot
+plot_loss_curve(train_losses, val_losses)
