@@ -170,7 +170,7 @@ def save_tensor_image(tensor, filename):
 if __name__ == "__main__":
     # Example: outputs in [0,1]
     model = CDANDenseUNet(in_channels=3, out_channels=3, base_channels=32, growth_rate=12, output_range="01")
-    x = torch.randn(1, 3, 574, 500)
+    x = torch.randn(1, 3, 224, 224)
     y = model(x)
     print("Output shape:", y.shape)
     print(f"Range → min={y.min().item():.4f}, max={y.max().item():.4f}, mean={y.mean().item():.4f}")
