@@ -33,3 +33,6 @@ transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
 ])
+# === Create Dataset Instances ===
+train_dataset =cvccolondbsplitDataset(train_low_dir, train_high_dir,transform=transform)
+val_dataset = cvccolondbsplitDataset(val_low_dir, val_high_dir, transform=transform)
