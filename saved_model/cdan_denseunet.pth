@@ -1,60 +1,9 @@
-# Step 1: Prepare your environment
-import sys
 import torch
-from PIL import Image
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
-
-# Add model folder to path
-sys.path.append('/content/CdanDenseUNet')
-from models.cdan_denseunet import CDANDenseUNet
-
-# Set the device
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# Step 2: Initialize your model
-model = CDANDenseUNet(
-    in_channels=3,
-    out_channels=3,
-    base_channels=32,
-    growth_rate=12,
-    output_range="01"
-).to(device)
-
-# Step 3: Load the model parameters
-model_path = '/content/saved_model/cdan_denseunet.pth'
-model.load_state_dict(torch.load(model_path, map_location=device))
-
-# Step 4: Set the model to evaluation mode
-model.eval()
-print("Model loaded successfully. ✅")
-
-# Step 5: Make predictions on a new image
-# ✅ Added Resize(224, 224)
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),   # Resize before tensor conversion
-    transforms.ToTensor()
-])
-
-# Load and preprocess a new image
-image_path = 'path/to/your/new_image.jpg'
-try:
-    input_image = Image.open(image_path).convert("RGB")
-    input_tensor = transform(input_image).unsqueeze(0).to(device)  # [1, 3, 224, 224]
-    print(f"Image preprocessed. 🖼️ Resized to: {input_tensor.shape[2:]} (H, W)")
-except FileNotFoundError:
-    print(f"Error: Image not found at {image_path}. Please check the path.")
-    exit()
-
-# Step 6: Interpret the output
-# Perform the forward pass to get the prediction
-with torch.no_grad():
-    prediction = model(input_tensor)
-
-# Convert the output tensor to a PIL Image
-# Shape: (1, 3, 224, 224) → (3, 224, 224)
-output_tensor = prediction.squeeze(0).cpu().clamp(0, 1)
-output_image = transforms.ToPILImage()(output_tensor)
-
-# Save the predicted image
-output_image.save("predicted_image.png")
-print("Prediction saved as predicted_image.png. ✨")
+from PIL import Image
+import os
+import numpy as np
+from your_model_file import CDANDenseUNet
