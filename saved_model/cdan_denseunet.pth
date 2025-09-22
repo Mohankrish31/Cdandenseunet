@@ -9,7 +9,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import lpips
 from models.cdan_denseunet import CDANDenseUNet
-# ---------- Custom Loss Functions (YOU NEED TO DEFINE THESE) ----------
+
+# ---------- Custom Loss Functions ----------
 class SobelEdgeLoss(nn.Module):
     def __init__(self):
         super().__init__()
@@ -25,6 +26,7 @@ class SobelEdgeLoss(nn.Module):
         target_edge_y = torch.abs(nn.functional.conv2d(target, self.sobel_y.repeat(3, 1, 1, 1), padding=1, groups=3))
         target_edge = (target_edge_x + target_edge_y).mean()
         return torch.abs(pred_edge - target_edge)
+
 class SSIMLoss(nn.Module):
     def __init__(self, window_size=11, size_average=True):
         super().__init__()
@@ -35,19 +37,19 @@ class SSIMLoss(nn.Module):
     def create_window(self, window_size, channel):
         def gaussian(window_size, sigma):
             gauss = torch.exp(-(torch.arange(window_size).float() - window_size//2)**2/(2*sigma**2))
-            return gauss/gauss.sum()
+            return gauss / gauss.sum()
         _1D_window = gaussian(window_size, 1.5).unsqueeze(1)
         _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
         window = _2D_window.expand(channel, 1, window_size, window_size).contiguous()
         return window
     def forward(self, img1, img2):
-        (_, channel, _, _) = img1.size() 
+        (_, channel, _, _) = img1.size()
         if channel == self.channel and self.window.dtype == img1.dtype:
             window = self.window.to(img1.device)
         else:
             window = self.create_window(self.window_size, channel).to(img1.device).type(img1.dtype)
             self.window = window
-            self.channel = channel 
+            self.channel = channel
         mu1 = nn.functional.conv2d(img1, window, padding=self.window_size//2, groups=channel)
         mu2 = nn.functional.conv2d(img2, window, padding=self.window_size//2, groups=channel)
         mu1_sq = mu1.pow(2)
@@ -57,9 +59,16 @@ class SSIMLoss(nn.Module):
         sigma2_sq = nn.functional.conv2d(img2*img2, window, padding=self.window_size//2, groups=channel) - mu2_sq
         sigma12 = nn.functional.conv2d(img1*img2, window, padding=self.window_size//2, groups=channel) - mu1_mu2
         C1 = 0.01**2
-        C2 = 0.03**2 
+        C2 = 0.03**2
         ssim_map = ((2*mu1_mu2 + C1)*(2*sigma12 + C2))/((mu1_sq + mu2_sq + C1)*(sigma1_sq + sigma2_sq + C2))
         return 1 - ssim_map.mean()
+
+# ---------- Color Loss ----------
+def color_loss(pred, target):
+    pred_mean = pred.mean(dim=(2,3))   # shape (B, C)
+    target_mean = target.mean(dim=(2,3))  # shape (B, C)
+    return torch.mean(torch.abs(pred_mean - target_mean))
+
 # ---------- Dataset ----------
 class cvccolondbsplitDataset(Dataset):
     def __init__(self, low_dir, high_dir, transform=None):
@@ -78,18 +87,20 @@ class cvccolondbsplitDataset(Dataset):
             low_img = self.transform(low_img)
             high_img = self.transform(high_img)
         return low_img, high_img
+
 # ---------- Loss Function ----------
-def compute_losses(pred, target, mse_loss_fn, edge_loss_fn, ssim_loss_fn, lpips_model, 
-                  w_mse=1.0, w_lpips=0.1, w_edge=0.1, w_ssim=0.1):
-    """Calculate combined loss function"""
+def compute_losses(pred, target, mse_loss_fn, edge_loss_fn, ssim_loss_fn, lpips_model,
+                   w_mse=1.0, w_lpips=0.1, w_edge=0.2, w_ssim=0.2, w_color=0.5):
     mse = mse_loss_fn(pred, target)
     edge = edge_loss_fn(pred, target)
-    lp = lpips_model(2*pred - 1, 2*target - 1).mean()  # LPIPS expects [-1, 1]
-    ssim = ssim_loss_fn(pred, target) 
-    total = w_mse * mse + w_lpips * lp + w_edge * edge + w_ssim * ssim
-    return total, mse.item(), lp.item(), edge.item(), ssim.item()
+    lp = lpips_model(2*pred - 1, 2*target - 1).mean()
+    ssim_val = ssim_loss_fn(pred, target)
+    color_val = color_loss(pred, target)
+    total = (w_mse*mse + w_lpips*lp + w_edge*edge + w_ssim*ssim_val + w_color*color_val)
+    return total, mse.item(), lp.item(), edge.item(), ssim_val.item(), color_val.item()
+
+# ---------- Plot Loss ----------
 def plot_loss_curve(train_losses, val_losses):
-    """Plot training and validation loss curves"""
     plt.figure(figsize=(10, 5))
     plt.plot(train_losses, label='Training Loss')
     plt.plot(val_losses, label='Validation Loss')
@@ -100,47 +111,55 @@ def plot_loss_curve(train_losses, val_losses):
     plt.grid(True)
     plt.savefig('loss_curve.png')
     plt.show()
+
 # ==================== TRAINING SETUP ====================
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # Hyperparameters
 learning_rate = 0.001
 weight_decay = 1e-5
 num_epochs = 100
 early_stopping_patience = 10
 batch_size = 8
+
 # Loss weights
 w_mse = 1.0
 w_lpips = 0.1
 w_edge = 0.2
 w_ssim = 0.2
+w_color = 0.5
+
 # Transformations
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
 ])
+
 # Paths
 train_high_dir = "/content/cvccolondbsplit/train/high"
 train_low_dir = "/content/cvccolondbsplit/train/low"
 val_high_dir = "/content/cvccolondbsplit/val/high"
 val_low_dir = "/content/cvccolondbsplit/val/low"
-# Create datasets and dataloaders
+
+# Datasets and loaders
 train_dataset = cvccolondbsplitDataset(train_low_dir, train_high_dir, transform=transform)
 val_dataset = cvccolondbsplitDataset(val_low_dir, val_high_dir, transform=transform)
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-# Initialize model, loss functions, and optimizer
+
+# Model, loss, optimizer
 model = CDANDenseUNet(in_channels=3, out_channels=3, base_channels=32, growth_rate=12, output_range="01").to(device)
-# Initialize loss functions
 mse_loss_fn = nn.MSELoss()
 edge_loss_fn = SobelEdgeLoss()
 ssim_loss_fn = SSIMLoss()
 lpips_model = lpips.LPIPS(net='vgg').to(device)
 optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
 # Training loop
 best_val_loss = float('inf')
 patience_counter = 0
-train_losses = []
-val_losses = []
+train_losses, val_losses = [], []
+
 print("Starting training...")
 for epoch in range(num_epochs):
     # Training
@@ -151,18 +170,17 @@ for epoch in range(num_epochs):
         target_img = target_img.to(device)
         optimizer.zero_grad()
         pred = model(input_img)
-        total_loss, mse_val, lp_val, edge_val, ssim_val = compute_losses(
+        total_loss, mse_val, lp_val, edge_val, ssim_val, color_val = compute_losses(
             pred, target_img, mse_loss_fn, edge_loss_fn, ssim_loss_fn, lpips_model,
-            w_mse, w_lpips, w_edge, w_ssim
+            w_mse, w_lpips, w_edge, w_ssim, w_color
         )
         total_loss.backward()
         optimizer.step()
-        
         running_loss += total_loss.item()
     
     avg_train_loss = running_loss / len(train_loader)
     train_losses.append(avg_train_loss)
-    
+
     # Validation
     model.eval()
     val_running = 0.0
@@ -171,17 +189,17 @@ for epoch in range(num_epochs):
             input_img = input_img.to(device)
             target_img = target_img.to(device)
             pred = model(input_img)
-            total_loss, _, _, _, _ = compute_losses(
+            total_loss, _, _, _, _, _ = compute_losses(
                 pred, target_img, mse_loss_fn, edge_loss_fn, ssim_loss_fn, lpips_model,
-                w_mse, w_lpips, w_edge, w_ssim
+                w_mse, w_lpips, w_edge, w_ssim, w_color
             )
             val_running += total_loss.item()
     
     avg_val_loss = val_running / len(val_loader)
     val_losses.append(avg_val_loss)
-    
+
     print(f"Epoch {epoch+1}/{num_epochs}  TrainLoss: {avg_train_loss:.6f}  ValLoss: {avg_val_loss:.6f}")
-    
+
     # Save best model
     if avg_val_loss < best_val_loss:
         best_val_loss = avg_val_loss
@@ -194,6 +212,6 @@ for epoch in range(num_epochs):
             print("🛑 Early stopping triggered")
             break
 
-# Plot results
+# Plot loss curve
 plot_loss_curve(train_losses, val_losses)
 print("Training completed!")
