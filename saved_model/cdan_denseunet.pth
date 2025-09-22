@@ -123,11 +123,11 @@ early_stopping_patience = 10
 batch_size = 8
 
 # Loss weights
-w_mse = 1.0
+w_mse = 0.5
 w_lpips = 0.1
 w_edge = 0.2
 w_ssim = 0.2
-w_color = 0.5
+w_color = 2.0
 
 # Transformations
 transform = transforms.Compose([
