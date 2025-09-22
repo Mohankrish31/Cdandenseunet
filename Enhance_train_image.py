@@ -27,6 +27,9 @@ model = CDANDenseUNet(
     growth_rate=12,
     output_range="01"
 )
+# 🔍 Debug: Inspect checkpoint
+checkpoint = torch.load(model_path, map_location=device)
+print("Keys in checkpoint:", checkpoint.keys())
 model.load_state_dict(torch.load(model_path, map_location=device))
 model.to(device)
 model.eval()
