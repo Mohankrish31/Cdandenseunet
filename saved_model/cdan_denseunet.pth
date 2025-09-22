@@ -128,9 +128,6 @@ train_dataset = cvccolondbsplitDataset(train_low_dir, train_high_dir, transform=
 val_dataset = cvccolondbsplitDataset(val_low_dir, val_high_dir, transform=transform)
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-# 🔍 Debug: Inspect checkpoint
-checkpoint = torch.load(model_path, map_location=device)
-print("Keys in checkpoint:", checkpoint.keys())
 # Initialize model, loss functions, and optimizer
 model = CDANDenseUNet(in_channels=3, out_channels=3, base_channels=32, growth_rate=12, output_range="01").to(device)
 # Initialize loss functions
